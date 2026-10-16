@@ -91,6 +91,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
+import java.time.DayOfWeek
 import java.util.Date
 import java.util.Locale
 
@@ -121,6 +122,12 @@ class SettingsViewModel(private val c: AppContainer) : ViewModel() {
     }
 
     fun setTheme(mode: ThemeMode) = viewModelScope.launch { c.settings.setThemeMode(mode) }
+
+    fun setWeekStart(day: DayOfWeek) = viewModelScope.launch {
+        c.settings.setWeekStart(day)
+        // "Any time this week" events start on the first day of the week.
+        c.calendar.syncAll()
+    }
 
     fun enableCalendar(calendarId: Long? = null) = viewModelScope.launch {
         val list = c.calendar.calendars()
@@ -341,6 +348,18 @@ fun SettingsScreen() {
                     }
                 }
             }
+            Text("한 주의 시작")
+            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                val days = listOf(DayOfWeek.SUNDAY, DayOfWeek.MONDAY)
+                days.forEachIndexed { i, day ->
+                    SegmentedButton(
+                        selected = s.weekStart == day,
+                        onClick = { vm.setWeekStart(day) },
+                        shape = SegmentedButtonDefaults.itemShape(i, days.size),
+                    ) { Text(if (day == DayOfWeek.SUNDAY) "일요일" else "월요일") }
+                }
+            }
+            Hint("대시보드 주간 화면, ‘주중 아무 때나’ 할 일의 한 주, 요일 고르기, 엑셀 달력이 이 요일부터 시작해요.")
 
             HorizontalDivider()
             Section("캘린더 연동")

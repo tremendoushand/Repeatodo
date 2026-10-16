@@ -7,11 +7,12 @@ import androidx.room.PrimaryKey
 import com.tremendoushand.repeatodo.domain.CategoryDto
 import com.tremendoushand.repeatodo.domain.CompletionDto
 import com.tremendoushand.repeatodo.domain.Goal
+import com.tremendoushand.repeatodo.domain.LAST_DAY
 import com.tremendoushand.repeatodo.domain.RepeatRule
 import com.tremendoushand.repeatodo.domain.RepeatType
-import com.tremendoushand.repeatodo.domain.LAST_DAY
 import com.tremendoushand.repeatodo.domain.TaskDto
 import com.tremendoushand.repeatodo.domain.WeekDays
+import java.time.DayOfWeek
 import java.time.LocalDate
 
 @Entity(tableName = "categories")
@@ -50,11 +51,15 @@ data class TaskEntity(
     val updatedAt: Long,
     val deleted: Boolean = false,
 ) {
-    val rule: RepeatRule
-        get() = RepeatRule(repeatType, weekDays, monthDay, LocalDate.ofEpochDay(startDate))
+    /** The repeat rule, with weeks starting on [weekStart] (the user's setting). */
+    fun rule(weekStart: DayOfWeek): RepeatRule =
+        RepeatRule(repeatType, weekDays, monthDay, LocalDate.ofEpochDay(startDate), weekStart)
+
+    /** "Any time this week/month" rather than on set days. */
+    val isFlexible: Boolean get() = rule(DayOfWeek.MONDAY).isFlexible
 
     val goal: Goal
-        get() = Goal(perDay = targetCount.coerceAtLeast(1), daysPerPeriod = if (rule.isFlexible) periodTimes.coerceAtLeast(1) else 1)
+        get() = Goal(perDay = targetCount.coerceAtLeast(1), daysPerPeriod = if (isFlexible) periodTimes.coerceAtLeast(1) else 1)
 }
 
 @Entity(tableName = "completions", indices = [Index("taskId")])

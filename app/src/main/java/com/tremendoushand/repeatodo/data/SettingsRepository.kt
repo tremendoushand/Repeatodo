@@ -11,6 +11,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import java.time.DayOfWeek
 
 enum class ThemeMode { SYSTEM, LIGHT, DARK }
 
@@ -30,6 +31,8 @@ data class AppSettings(
     val lastSyncAt: Long? = null,
     val lastSyncError: String? = null,
     val askedNotificationPermission: Boolean = false,
+    /** First day of the week for weekly views and "any time this week" tasks. */
+    val weekStart: DayOfWeek = DayOfWeek.MONDAY,
 )
 
 private val Context.dataStore by preferencesDataStore(name = "settings")
@@ -47,6 +50,7 @@ class SettingsRepository(private val context: Context) {
         val lastSyncAt = longPreferencesKey("last_sync_at")
         val lastSyncError = stringPreferencesKey("last_sync_error")
         val askedNotification = booleanPreferencesKey("asked_notification_permission")
+        val weekStart = intPreferencesKey("week_start")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { it.toSettings() }
@@ -72,6 +76,7 @@ class SettingsRepository(private val context: Context) {
             lastSyncAt = this[Keys.lastSyncAt],
             lastSyncError = this[Keys.lastSyncError],
             askedNotificationPermission = this[Keys.askedNotification] ?: false,
+            weekStart = if (this[Keys.weekStart] == DayOfWeek.SUNDAY.value) DayOfWeek.SUNDAY else DayOfWeek.MONDAY,
         )
     }
 
@@ -108,6 +113,11 @@ class SettingsRepository(private val context: Context) {
     suspend fun setSyncResult(at: Long?, error: String?) = context.dataStore.edit {
         if (at != null) it[Keys.lastSyncAt] = at
         if (error != null) it[Keys.lastSyncError] = error else it.remove(Keys.lastSyncError)
+    }
+
+    /** Only Sunday and Monday are offered. */
+    suspend fun setWeekStart(day: DayOfWeek) = context.dataStore.edit {
+        it[Keys.weekStart] = if (day == DayOfWeek.SUNDAY) DayOfWeek.SUNDAY.value else DayOfWeek.MONDAY.value
     }
 
     suspend fun setAskedNotificationPermission() = context.dataStore.edit { it[Keys.askedNotification] = true }

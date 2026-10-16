@@ -96,7 +96,7 @@ class CalendarSync(
                 }
             }
             for ((task, calendarId) in wanted.values) {
-                val values = eventValues(task, calendarId) ?: continue
+                val values = eventValues(task, calendarId, s.weekStart) ?: continue
                 val link = links[task.id]?.takeIf { it.calendarId == calendarId }
                 val updated = link != null && runCatching {
                     resolver.update(ContentUris.withAppendedId(Events.CONTENT_URI, link.eventId), values, null, null)
@@ -134,18 +134,18 @@ class CalendarSync(
     private fun deleteEvent(eventId: Long): Boolean =
         runCatching { resolver.delete(ContentUris.withAppendedId(Events.CONTENT_URI, eventId), null, null) > 0 }.getOrDefault(false)
 
-    private fun eventValues(task: TaskEntity, calendarId: Long): ContentValues? {
-        val rule = task.rule
+    private fun eventValues(task: TaskEntity, calendarId: Long, weekStart: DayOfWeek): ContentValues? {
+        val rule = task.rule(weekStart)
         val flexible = rule.isFlexible
         val first: LocalDate = when {
-            flexible && task.repeatType == RepeatType.WEEKLY -> weekStartOf(rule.startDate)
+            flexible && task.repeatType == RepeatType.WEEKLY -> weekStartOf(rule.startDate, weekStart)
             flexible -> rule.startDate.withDayOfMonth(1)
             else -> rule.nextAttentionDate(rule.startDate) ?: return null
         }
         val rrule = when (task.repeatType) {
             RepeatType.DAILY -> "FREQ=DAILY"
             RepeatType.WEEKLY -> if (flexible) {
-                "FREQ=WEEKLY;BYDAY=MO"
+                "FREQ=WEEKLY;BYDAY=" + byDay(weekStart)
             } else {
                 "FREQ=WEEKLY;BYDAY=" + WeekDays.toList(task.weekDays).joinToString(",") { byDay(it) }
             }

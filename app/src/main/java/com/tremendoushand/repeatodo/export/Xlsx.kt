@@ -47,12 +47,13 @@ object Xlsx {
     private const val S_HEADER_SAT = 9
     private const val S_NOTE = 10
 
-    private val WEEK = listOf("월", "화", "수", "목", "금", "토", "일")
+    private fun label(day: DayOfWeek) = "월화수목금토일"[day.value - 1].toString()
 
     internal fun calendarSheet(report: MonthReport): String {
         val month = report.month
         val first = month.atDay(1)
-        val lead = first.dayOfWeek.value - 1 // Monday first
+        val week = (0L until 7L).map { report.weekStart.plus(it) }
+        val lead = week.indexOf(first.dayOfWeek)
         val weeks = (lead + month.lengthOfMonth() + 6) / 7
         val rows = StringBuilder()
 
@@ -60,7 +61,7 @@ object Xlsx {
             str(cell("A", 1), "${month.year}년 ${month.monthValue}월 Repeatodo 기록", S_TITLE)
         }
         rows.row(2, height = 20.0) {
-            WEEK.forEachIndexed { i, name -> str(cell(col(i), 2), name, headerStyle(i)) }
+            week.forEachIndexed { i, day -> str(cell(col(i), 2), label(day), headerStyle(day)) }
         }
         for (w in 0 until weeks) {
             val r = 3 + w
@@ -104,7 +105,7 @@ object Xlsx {
             str(cell("A", 1), "카테고리", S_HEADER)
             str(cell("B", 1), "할 일", S_HEADER)
             str(cell("C", 1), "반복", S_HEADER)
-            for (d in 1..days) number(cell(col(2 + d), 1), d, headerStyle(month.atDay(d).dayOfWeek.value - 1))
+            for (d in 1..days) number(cell(col(2 + d), 1), d, headerStyle(month.atDay(d).dayOfWeek))
             str(cell(col(3 + days), 1), "합계(회)", S_HEADER)
             str(cell(col(4 + days), 1), "한 날(일)", S_HEADER)
         }
@@ -113,8 +114,8 @@ object Xlsx {
             str(cell("B", 2), "", S_HEADER)
             str(cell("C", 2), "", S_HEADER)
             for (d in 1..days) {
-                val i = month.atDay(d).dayOfWeek.value - 1
-                str(cell(col(2 + d), 2), WEEK[i], headerStyle(i))
+                val day = month.atDay(d).dayOfWeek
+                str(cell(col(2 + d), 2), label(day), headerStyle(day))
             }
             str(cell(col(3 + days), 2), "", S_HEADER)
             str(cell(col(4 + days), 2), "", S_HEADER)
@@ -159,16 +160,24 @@ object Xlsx {
         )
     }
 
-    private fun headerStyle(dayIndex: Int) = when (dayIndex) {
-        DayOfWeek.SUNDAY.value - 1 -> S_HEADER_SUN
-        DayOfWeek.SATURDAY.value - 1 -> S_HEADER_SAT
+    private fun headerStyle(day: DayOfWeek) = when (day) {
+        DayOfWeek.SUNDAY -> S_HEADER_SUN
+        DayOfWeek.SATURDAY -> S_HEADER_SAT
         else -> S_HEADER
+    }
+
+    /** Light blue for Saturday, light red for Sunday, as in the app. */
+    private fun weekendRgb(day: DayOfWeek) = when (day) {
+        DayOfWeek.SATURDAY -> SAT_RGB
+        DayOfWeek.SUNDAY -> SUN_RGB
+        else -> null
     }
 
     /** A calendar day: the day number in bold, then one line per task done. */
     private fun StringBuilder.dayCell(ref: String, date: LocalDate, entries: List<DayEntry>) {
         append("<c r=\"$ref\" s=\"$S_DAY\" t=\"inlineStr\"><is>")
-        append("<r><rPr><b/><sz val=\"11\"/></rPr><t>${date.dayOfMonth}</t></r>")
+        val color = weekendRgb(date.dayOfWeek)?.let { "<color rgb=\"$it\"/>" }.orEmpty()
+        append("<r><rPr><b/><sz val=\"11\"/>$color</rPr><t>${date.dayOfMonth}</t></r>")
         if (entries.isNotEmpty()) {
             val text = entries.joinToString("") { e ->
                 val times = when {
@@ -267,6 +276,9 @@ object Xlsx {
         return sb.toString()
     }
 
+    private const val SAT_RGB = "FF5C9CE6"
+    private const val SUN_RGB = "FFE57373"
+
     private const val XML_HEAD = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n"
     private const val NS_MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
     private const val NS_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -312,8 +324,8 @@ object Xlsx {
         "<font><sz val=\"11\"/><name val=\"맑은 고딕\"/><family val=\"2\"/></font>" +
         "<font><b/><sz val=\"11\"/><name val=\"맑은 고딕\"/><family val=\"2\"/></font>" +
         "<font><b/><sz val=\"16\"/><name val=\"맑은 고딕\"/><family val=\"2\"/></font>" +
-        "<font><b/><sz val=\"11\"/><color rgb=\"FFC00000\"/><name val=\"맑은 고딕\"/><family val=\"2\"/></font>" +
-        "<font><b/><sz val=\"11\"/><color rgb=\"FF1F4E9F\"/><name val=\"맑은 고딕\"/><family val=\"2\"/></font>" +
+        "<font><b/><sz val=\"11\"/><color rgb=\"$SUN_RGB\"/><name val=\"맑은 고딕\"/><family val=\"2\"/></font>" +
+        "<font><b/><sz val=\"11\"/><color rgb=\"$SAT_RGB\"/><name val=\"맑은 고딕\"/><family val=\"2\"/></font>" +
         "<font><sz val=\"9\"/><color rgb=\"FF7F7F7F\"/><name val=\"맑은 고딕\"/><family val=\"2\"/></font>" +
         "</fonts>" +
         "<fills count=\"5\">" +

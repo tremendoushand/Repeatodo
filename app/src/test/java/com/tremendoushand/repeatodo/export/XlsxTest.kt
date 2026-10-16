@@ -8,6 +8,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.time.DayOfWeek
 import java.time.YearMonth
 import java.util.zip.ZipInputStream
 import javax.xml.parsers.DocumentBuilderFactory
@@ -32,7 +33,7 @@ class XlsxTest {
 
     @Test
     fun report_keepsOnlyThisMonthsWork() {
-        val report = buildMonthReport(month, tasks, categories, completions) { "" }
+        val report = buildMonthReport(month, tasks, categories, completions, DayOfWeek.MONDAY) { "" }
         // Untouched tasks, zero counts and other months are left out; categorized tasks come first.
         assertEquals(listOf("묵주기도", "물 <8잔> & \"기록\""), report.tasks.map { it.title })
         val rosary = report.tasks.first()
@@ -44,7 +45,7 @@ class XlsxTest {
 
     @Test
     fun workbook_partsAreWellFormedXml() {
-        val report = buildMonthReport(month, tasks, categories, completions) { "매주 아무 때나" }
+        val report = buildMonthReport(month, tasks, categories, completions, DayOfWeek.SUNDAY) { "매주 아무 때나" }
         val out = ByteArrayOutputStream()
         Xlsx.write(report, out)
 
@@ -66,6 +67,9 @@ class XlsxTest {
         assertTrue(calendar.contains("묵주기도 5/5회"))
         assertTrue(calendar.contains("물 &lt;8잔&gt; &amp; &quot;기록&quot; 2/8회"))
         assertEquals("repeatodo-2026-10.xlsx", Xlsx.fileName(report))
+        // Sunday-first calendar: October 2026 starts on a Thursday, the fifth column (E).
+        assertTrue(calendar.contains("<c r=\"A2\" s=\"8\" t=\"inlineStr\"><is><t xml:space=\"preserve\">일</t>"))
+        assertTrue(calendar.contains("<c r=\"E3\" s=\"3\" t=\"inlineStr\"><is><r><rPr><b/><sz val=\"11\"/></rPr><t>1</t>"))
     }
 
     @Test

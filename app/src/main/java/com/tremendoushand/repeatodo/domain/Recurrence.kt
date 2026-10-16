@@ -12,15 +12,17 @@ const val LAST_DAY = 32
 /**
  * How a task repeats.
  *
- * - [weekDays]: bit 0 = Monday ... bit 6 = Sunday. 0 on a WEEKLY rule means "any day of the week, once".
- * - [monthDay]: 1..31 or [LAST_DAY]. 0 on a MONTHLY rule means "any day of the month, once".
+ * - [weekDays]: bit 0 = Monday ... bit 6 = Sunday. 0 on a WEEKLY rule means "any day of the week".
+ * - [monthDay]: 1..31 or [LAST_DAY]. 0 on a MONTHLY rule means "any day of the month".
  *   A day that a month doesn't have (e.g. 31 in April) falls on that month's last day.
+ * - [weekStart]: the first day of a week for "any day of the week" rules (a user setting, not stored with the task).
  */
 data class RepeatRule(
     val type: RepeatType,
     val weekDays: Int = 0,
     val monthDay: Int = 0,
     val startDate: LocalDate,
+    val weekStart: DayOfWeek = DayOfWeek.MONDAY,
 ) {
     val isFlexible: Boolean
         get() = when (type) {
@@ -41,7 +43,7 @@ object WeekDays {
 
 /**
  * One slot of a task that can be completed: a due day, or for flexible ("any time this
- * week/month") rules the whole period. Weeks run Monday to Sunday.
+ * week/month") rules the whole period. Weeks start on the rule's [RepeatRule.weekStart].
  *
  * [key] is the epoch day of the due date, or of the period's first day for flexible rules.
  * Completions are always recorded per day (keyed by that day's epoch day); for a flexible
@@ -74,7 +76,7 @@ fun RepeatRule.isDueOn(date: LocalDate): Boolean {
 
 private fun RepeatRule.flexiblePeriod(date: LocalDate): Occurrence {
     val (start, end) = when (type) {
-        RepeatType.WEEKLY -> weekStartOf(date).let { it to it.plusDays(6) }
+        RepeatType.WEEKLY -> weekStartOf(date, weekStart).let { it to it.plusDays(6) }
         else -> date.withDayOfMonth(1).let { it to it.withDayOfMonth(it.lengthOfMonth()) }
     }
     return Occurrence(start.toEpochDay(), start, end, flexible = true)

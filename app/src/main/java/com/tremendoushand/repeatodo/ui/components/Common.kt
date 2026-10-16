@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
@@ -13,6 +14,7 @@ import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -50,6 +52,20 @@ fun dayLabel(day: DayOfWeek): String = when (day) {
     DayOfWeek.SUNDAY -> "일"
 }
 
+/** The seven days of a week starting on [weekStart]. */
+fun weekOrder(weekStart: DayOfWeek): List<DayOfWeek> = (0L until 7L).map { weekStart.plus(it) }
+
+/** Saturday in light blue and Sunday in light red; null for other days (keep the normal color). */
+@Composable
+fun weekendColor(day: DayOfWeek): Color? {
+    val dark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+    return when (day) {
+        DayOfWeek.SATURDAY -> if (dark) Color(0xFF8AB4F8) else Color(0xFF5C9CE6)
+        DayOfWeek.SUNDAY -> if (dark) Color(0xFFF28B82) else Color(0xFFE57373)
+        else -> null
+    }
+}
+
 fun formatTime(minutes: Int): String {
     val h = minutes / 60
     val m = minutes % 60
@@ -62,14 +78,14 @@ fun formatTime(minutes: Int): String {
     return "$ampm $h12:${m.toString().padStart(2, '0')}"
 }
 
-fun repeatLabel(task: TaskEntity): String {
+fun repeatLabel(task: TaskEntity, weekStart: DayOfWeek = DayOfWeek.MONDAY): String {
     val days = task.goal.daysPerPeriod
     val base = when (task.repeatType) {
         RepeatType.DAILY -> "매일"
         RepeatType.WEEKLY ->
             if (task.weekDays and WeekDays.ALL == 0) "주중 아무 때나" + if (days > 1) " ${days}일" else ""
             else if (task.weekDays and WeekDays.ALL == WeekDays.ALL) "매주 매일"
-            else "매주 " + WeekDays.toList(task.weekDays).joinToString("·") { dayLabel(it) }
+            else "매주 " + WeekDays.toList(task.weekDays, weekStart).joinToString("·") { dayLabel(it) }
         RepeatType.MONTHLY -> when {
             task.monthDay == 0 -> "월중 아무 때나" + if (days > 1) " ${days}일" else ""
             task.monthDay >= LAST_DAY -> "매월 말일"
@@ -77,7 +93,7 @@ fun repeatLabel(task: TaskEntity): String {
         }
     }
     val parts = mutableListOf(base)
-    if (task.targetCount > 1) parts += if (task.rule.isFlexible) "하는 날마다 ${task.targetCount}회" else "${task.targetCount}회씩"
+    if (task.targetCount > 1) parts += if (task.isFlexible) "하는 날마다 ${task.targetCount}회" else "${task.targetCount}회씩"
     task.reminderMinutes?.let { parts += formatTime(it) }
     task.totalCount?.let { parts += "총 ${it}번" }
     return parts.joinToString(" · ")

@@ -50,11 +50,16 @@ import com.tremendoushand.repeatodo.ui.theme.NoCategoryColor
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import java.time.DayOfWeek
 
-data class TaskListState(val tasks: List<TaskEntity> = emptyList(), val categories: List<CategoryEntity> = emptyList())
+data class TaskListState(
+    val tasks: List<TaskEntity> = emptyList(),
+    val categories: List<CategoryEntity> = emptyList(),
+    val weekStart: DayOfWeek = DayOfWeek.MONDAY,
+)
 
 class TaskListViewModel(c: AppContainer) : ViewModel() {
-    val state = combine(c.tasks.tasks, c.tasks.categories) { t, cats -> TaskListState(t, cats) }
+    val state = combine(c.tasks.tasks, c.tasks.categories, c.settings.settings) { t, cats, s -> TaskListState(t, cats, s.weekStart) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TaskListState())
 }
 
@@ -122,7 +127,7 @@ fun TaskListScreen(onAdd: (categoryId: String?) -> Unit, onOpen: (String) -> Uni
                         Text(category?.name ?: "카테고리 없음", style = MaterialTheme.typography.titleSmall)
                     }
                 }
-                items(tasks, key = { it.id }) { task -> TaskItem(task) { onOpen(task.id) } }
+                items(tasks, key = { it.id }) { task -> TaskItem(task, state.weekStart) { onOpen(task.id) } }
             }
             if (finished.isNotEmpty()) {
                 item {
@@ -131,20 +136,20 @@ fun TaskListScreen(onAdd: (categoryId: String?) -> Unit, onOpen: (String) -> Uni
                         Text(if (showFinished) "끝난 할 일 숨기기" else "끝난 할 일 ${finished.size}개 보기")
                     }
                 }
-                if (showFinished) items(finished, key = { "f-" + it.id }) { task -> TaskItem(task) { onOpen(task.id) } }
+                if (showFinished) items(finished, key = { "f-" + it.id }) { task -> TaskItem(task, state.weekStart) { onOpen(task.id) } }
             }
         }
     }
 }
 
 @Composable
-private fun TaskItem(task: TaskEntity, onClick: () -> Unit) {
+private fun TaskItem(task: TaskEntity, weekStart: DayOfWeek, onClick: () -> Unit) {
     ListItem(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
         headlineContent = { Text(task.title) },
         supportingContent = {
             Column {
-                Text(repeatLabel(task))
+                Text(repeatLabel(task, weekStart))
                 if (task.note.isNotBlank()) Text(task.note, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         },

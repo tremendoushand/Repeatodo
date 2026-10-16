@@ -42,7 +42,7 @@
 - `tasks`: id, 제목, 메모, categoryId, 반복종류, 요일비트, 월날짜, 알림시간, 하루 횟수(targetCount), 기간당 날 수(periodTimes, ‘아무 때나’ 전용), 총 반복 횟수, 시작일, 캘린더표시, 보관여부, 정렬순서, updatedAt, deleted
 - `completions`: id(=taskId+날짜), taskId, 날짜(epochDay), 그날 한 횟수, updatedAt. 모든 반복 종류가 **날짜별로** 기록하고, ‘아무 때나’ 할 일은 기간(월~일 주, 또는 달) 안에서 하루 횟수를 채운 날이 기간당 날 수 이상이면 완료입니다.
 - `calendar_links`: taskId → 기기 캘린더 이벤트 id (기기마다 다르므로 동기화하지 않음)
-- 설정은 DataStore에 저장.
+- 설정은 DataStore에 저장. 한 주의 시작(일/월)도 설정이며, ‘주중 아무 때나’ 기간과 주간 화면·엑셀 달력이 이를 따름. 기록이 날짜별이라 바꿔도 데이터는 그대로.
 
 ## 4-1. 화면 사용 흐름
 

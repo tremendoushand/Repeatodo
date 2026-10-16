@@ -3,6 +3,7 @@ package com.tremendoushand.repeatodo.export
 import com.tremendoushand.repeatodo.data.CategoryEntity
 import com.tremendoushand.repeatodo.data.CompletionEntity
 import com.tremendoushand.repeatodo.data.TaskEntity
+import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.YearMonth
 
@@ -10,6 +11,8 @@ import java.time.YearMonth
 data class MonthReport(
     val month: YearMonth,
     val tasks: List<TaskLine>,
+    /** First column of the calendar sheet. */
+    val weekStart: DayOfWeek = DayOfWeek.MONDAY,
 ) {
     /** Entries for [date], in task order. */
     fun entriesOn(date: LocalDate): List<DayEntry> = tasks.mapNotNull { line ->
@@ -37,6 +40,7 @@ fun buildMonthReport(
     tasks: List<TaskEntity>,
     categories: List<CategoryEntity>,
     completions: List<CompletionEntity>,
+    weekStart: DayOfWeek,
     repeatLabel: (TaskEntity) -> String,
 ): MonthReport {
     val from = month.atDay(1).toEpochDay()
@@ -57,5 +61,5 @@ fun buildMonthReport(
                 counts = counts.getValue(task.id).associate { LocalDate.ofEpochDay(it.occurrenceKey).dayOfMonth to it.count },
             )
         }
-    return MonthReport(month, lines)
+    return MonthReport(month, lines, weekStart)
 }

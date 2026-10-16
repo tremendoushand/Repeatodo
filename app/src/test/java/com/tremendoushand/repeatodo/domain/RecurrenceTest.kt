@@ -7,6 +7,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.DayOfWeek.FRIDAY
 import java.time.DayOfWeek.MONDAY
+import java.time.DayOfWeek.SUNDAY
 import java.time.DayOfWeek.WEDNESDAY
 import java.time.LocalDate
 
@@ -39,6 +40,19 @@ class RecurrenceTest {
         // The week the task starts in still counts.
         assertEquals(LocalDate.of(2026, 9, 28), rule.occurrenceOn(start)!!.start)
         assertEquals(5, rule.occurrencesBetween(start, LocalDate.of(2026, 10, 31)).size)
+    }
+
+    @Test
+    fun weekly_flexibleFollowsSundayWeekStart() {
+        val rule = RepeatRule(RepeatType.WEEKLY, weekDays = 0, startDate = start, weekStart = SUNDAY)
+        val occ = rule.occurrenceOn(LocalDate.of(2026, 10, 8))!! // Thursday
+        assertEquals(LocalDate.of(2026, 10, 4), occ.start)
+        assertEquals(LocalDate.of(2026, 10, 10), occ.end)
+        // Days recorded per date stay valid when the week start changes; they just fall into other weeks.
+        val goal = Goal(perDay = 1, daysPerPeriod = 2)
+        val done = setOf(LocalDate.of(2026, 10, 4).toEpochDay(), LocalDate.of(2026, 10, 6).toEpochDay())
+        assertTrue(rule.isDone(occ, { if (it in done) 1 else 0 }, goal))
+        assertFalse(rule.copy(weekStart = MONDAY).isDone(rule.copy(weekStart = MONDAY).occurrenceOn(LocalDate.of(2026, 10, 8))!!, { if (it in done) 1 else 0 }, goal))
     }
 
     @Test

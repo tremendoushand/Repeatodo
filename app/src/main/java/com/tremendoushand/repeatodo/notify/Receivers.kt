@@ -59,7 +59,7 @@ private class Remaining(val todayCount: Int, val subtitle: String?)
 
 /** What's still left of [task] today, or null when there is nothing to remind about. */
 private suspend fun remaining(c: AppContainer, task: TaskEntity, today: LocalDate): Remaining? {
-    val rule = task.rule
+    val rule = task.rule(c.settings.current().weekStart)
     val occ = rule.occurrenceOn(today) ?: return null
     val counts = c.tasks.counts(task.id, occ.start.toEpochDay(), occ.end.toEpochDay())
     val todayCount = counts[today.toEpochDay()] ?: 0

@@ -57,9 +57,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -76,6 +79,7 @@ import com.tremendoushand.repeatodo.domain.streak
 import com.tremendoushand.repeatodo.ui.components.appViewModel
 import com.tremendoushand.repeatodo.ui.components.dayLabel
 import com.tremendoushand.repeatodo.ui.components.formatTime
+import com.tremendoushand.repeatodo.ui.components.weekendColor
 import com.tremendoushand.repeatodo.ui.theme.NoCategoryColor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -85,6 +89,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -133,15 +138,15 @@ class TodayViewModel(private val c: AppContainer) : ViewModel() {
     /** The day being looked at, or null to follow today. */
     private val selected = MutableStateFlow<LocalDate?>(null)
 
-    private val dates = combine(currentDateFlow(), selected) { today, sel ->
-        today to (sel?.takeIf { !it.isAfter(today) } ?: today)
+    private val dates = combine(currentDateFlow(), selected, c.settings.settings.map { it.weekStart }.distinctUntilChanged()) { today, sel, weekStart ->
+        Triple(today, sel?.takeIf { !it.isAfter(today) } ?: today, weekStart)
     }
 
-    val state = combine(c.tasks.tasks, c.tasks.categories, c.tasks.doneCompletions, dates) { tasks, categories, completions, (today, date) ->
+    val state = combine(c.tasks.tasks, c.tasks.categories, c.tasks.doneCompletions, dates) { tasks, categories, completions, (today, date, weekStart) ->
         val byCategory = categories.associateBy { it.id }
         val counts = completions.groupBy { it.taskId }.mapValues { (_, list) -> list.associate { it.occurrenceKey to it.count } }
         val items = tasks.mapNotNull { task ->
-            val rule = task.rule
+            val rule = task.rule(weekStart)
             if (date.isBefore(rule.startDate)) return@mapNotNull null
             val occ = rule.occurrenceOn(date) ?: return@mapNotNull null
             val taskCounts = counts[task.id].orEmpty()
@@ -197,8 +202,13 @@ fun TodayScreen(onAdd: () -> Unit, onOpen: (String) -> Unit) {
                 title = {
                     Column(Modifier.clickable(onClickLabel = "날짜 고르기") { pickDate = true }) {
                         Text(if (state.isToday) "오늘" else "지난 기록", fontWeight = FontWeight.Bold)
+                        val weekend = weekendColor(date.dayOfWeek)
                         Text(
-                            "${date.monthValue}월 ${date.dayOfMonth}일 ${dayLabel(date.dayOfWeek)}요일",
+                            buildAnnotatedString {
+                                append("${date.monthValue}월 ${date.dayOfMonth}일 ")
+                                if (weekend != null) withStyle(SpanStyle(color = weekend)) { append("${dayLabel(date.dayOfWeek)}요일") }
+                                else append("${dayLabel(date.dayOfWeek)}요일")
+                            },
                             style = MaterialTheme.typography.bodyMedium,
                             color = if (state.isToday) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary,
                         )

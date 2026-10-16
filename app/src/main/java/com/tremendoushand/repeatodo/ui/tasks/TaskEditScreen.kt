@@ -20,8 +20,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.DatePicker
@@ -33,6 +33,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -70,6 +71,8 @@ import com.tremendoushand.repeatodo.ui.components.TimePickerDialog
 import com.tremendoushand.repeatodo.ui.components.appViewModel
 import com.tremendoushand.repeatodo.ui.components.dayLabel
 import com.tremendoushand.repeatodo.ui.components.formatTime
+import com.tremendoushand.repeatodo.ui.components.weekOrder
+import com.tremendoushand.repeatodo.ui.components.weekendColor
 import com.tremendoushand.repeatodo.ui.theme.NoCategoryColor
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -290,14 +293,17 @@ fun TaskEditScreen(taskId: String?, categoryId: String? = null, onDone: () -> Un
                         FilterChip(selected = form.weekAnyDay, onClick = { vm.edit { it.copy(weekAnyDay = true) } }, label = { Text("주중 아무 때나") })
                     }
                     if (form.weekAnyDay) {
-                        PeriodDays(form) { v -> vm.edit { it.copy(periodTimes = v) } }
+                        PeriodDays(form, settings.weekStart) { v -> vm.edit { it.copy(periodTimes = v) } }
                     } else {
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            DayOfWeek.values().forEach { day ->
+                            weekOrder(settings.weekStart).forEach { day ->
+                                val selected = WeekDays.contains(form.weekDays, day)
                                 FilterChip(
-                                    selected = WeekDays.contains(form.weekDays, day),
+                                    selected = selected,
                                     onClick = { vm.edit { it.copy(weekDays = it.weekDays xor WeekDays.bit(day)) } },
-                                    label = { Text(dayLabel(day)) },
+                                    label = {
+                                        Text(dayLabel(day), color = weekendColor(day).takeIf { !selected } ?: LocalContentColor.current)
+                                    },
                                 )
                             }
                         }
@@ -310,7 +316,7 @@ fun TaskEditScreen(taskId: String?, categoryId: String? = null, onDone: () -> Un
                         FilterChip(selected = form.monthMode == MonthMode.ANY, onClick = { vm.edit { it.copy(monthMode = MonthMode.ANY) } }, label = { Text("월중 아무 때나") })
                     }
                     if (form.monthMode == MonthMode.ANY) {
-                        PeriodDays(form) { v -> vm.edit { it.copy(periodTimes = v) } }
+                        PeriodDays(form, settings.weekStart) { v -> vm.edit { it.copy(periodTimes = v) } }
                     }
                     if (form.monthMode == MonthMode.DAY) {
                         Stepper("매월", form.monthDay, "일", 1..31) { v -> vm.edit { it.copy(monthDay = v) } }
@@ -412,14 +418,15 @@ fun TaskEditScreen(taskId: String?, categoryId: String? = null, onDone: () -> Un
 
 /** How many different days of the week/month an "any time" task needs. */
 @Composable
-private fun PeriodDays(form: EditForm, onChange: (Int) -> Unit) {
+private fun PeriodDays(form: EditForm, weekStart: DayOfWeek, onChange: (Int) -> Unit) {
     val weekly = form.type == RepeatType.WEEKLY
+    val week = "${dayLabel(weekStart)}요일부터 ${dayLabel(weekStart.minus(1))}요일 사이"
     Stepper(if (weekly) "일주일에" else "한 달에", form.periodTimes.coerceIn(form.periodRange), "일", form.periodRange, onChange)
     Hint(
         if (form.periodTimes <= 1) {
-            if (weekly) "월요일부터 일요일 사이 아무 날이나 한 번 하면 돼요." else "그 달 안에 아무 날이나 한 번 하면 돼요."
+            if (weekly) "$week 아무 날이나 한 번 하면 돼요." else "그 달 안에 아무 날이나 한 번 하면 돼요."
         } else {
-            (if (weekly) "월요일부터 일요일 사이" else "그 달 안에") + " 서로 다른 ${form.periodTimes}일에 하면 돼요."
+            (if (weekly) week else "그 달 안에") + " 서로 다른 ${form.periodTimes}일에 하면 돼요."
         },
     )
 }

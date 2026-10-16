@@ -36,9 +36,10 @@ class ReminderScheduler(
         val now = LocalDateTime.now()
         val wanted = mutableMapOf<String, Long>()
 
+        val weekStart = settings.current().weekStart
         for (task in tasks.activeTasks()) {
             val minutes = task.reminderMinutes ?: continue
-            val at = nextTrigger(now) { from -> task.rule.nextAttentionDate(from)?.atStartOfDay()?.plusMinutes(minutes.toLong()) }
+            val at = nextTrigger(now) { from -> task.rule(weekStart).nextAttentionDate(from)?.atStartOfDay()?.plusMinutes(minutes.toLong()) }
             if (at != null) wanted[taskUri(task.id)] = at
         }
         for (minutes in settings.current().digestTimes) {

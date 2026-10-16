@@ -34,6 +34,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -42,12 +43,16 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TooltipBox
+import androidx.compose.material3.TooltipDefaults
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -84,6 +89,8 @@ import com.tremendoushand.repeatodo.ui.components.ColorDot
 import com.tremendoushand.repeatodo.ui.components.appViewModel
 import com.tremendoushand.repeatodo.ui.components.dayLabel
 import com.tremendoushand.repeatodo.ui.components.repeatLabel
+import com.tremendoushand.repeatodo.ui.components.weekOrder
+import com.tremendoushand.repeatodo.ui.components.weekendColor
 import com.tremendoushand.repeatodo.ui.theme.NoCategoryColor
 import com.tremendoushand.repeatodo.ui.today.currentDateFlow
 import kotlinx.coroutines.Dispatchers
@@ -91,12 +98,15 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.YearMonth
 import kotlin.math.roundToInt
@@ -139,6 +149,7 @@ data class DashState(
     val days: List<DayCell> = emptyList(),
     val overall: Rate = Rate.ZERO,
     val byCategory: List<Pair<CategoryEntity?, Rate>> = emptyList(),
+    val weekStart: DayOfWeek = DayOfWeek.MONDAY,
 )
 
 private data class View(val mode: DashMode, val anchor: LocalDate)
@@ -149,9 +160,11 @@ class DashboardViewModel(private val c: AppContainer) : ViewModel() {
     private val _messages = Channel<String>(Channel.BUFFERED)
     val messages = _messages.receiveAsFlow()
 
-    val state = combine(c.tasks.tasks, c.tasks.categories, c.tasks.doneCompletions, currentDateFlow(), view) { tasks, categories, completions, today, v ->
+    private val viewAndWeekStart = combine(view, c.settings.settings.map { it.weekStart }.distinctUntilChanged()) { v, ws -> v to ws }
+
+    val state = combine(c.tasks.tasks, c.tasks.categories, c.tasks.doneCompletions, currentDateFlow(), viewAndWeekStart) { tasks, categories, completions, today, (v, weekStart) ->
         val (from, to) = when (v.mode) {
-            DashMode.WEEK -> weekStartOf(v.anchor).let { it to it.plusDays(6) }
+            DashMode.WEEK -> weekStartOf(v.anchor, weekStart).let { it to it.plusDays(6) }
             DashMode.MONTH -> v.anchor.withDayOfMonth(1).let { it to it.withDayOfMonth(it.lengthOfMonth()) }
         }
         val byId = categories.associateBy { it.id }
@@ -159,7 +172,7 @@ class DashboardViewModel(private val c: AppContainer) : ViewModel() {
         val days = generateSequence(from) { it.plusDays(1) }.takeWhile { !it.isAfter(to) }.toList()
 
         val rows = tasks.mapNotNull { task ->
-            val rule = task.rule
+            val rule = task.rule(weekStart)
             if (rule.startDate.isAfter(to)) return@mapNotNull null
             val taskCounts = counts[task.id].orEmpty()
             val countOn = { day: Long -> taskCounts[day] ?: 0 }
@@ -207,7 +220,7 @@ class DashboardViewModel(private val c: AppContainer) : ViewModel() {
             var done = 0
             val anyTime = mutableListOf<Long>()
             for (row in rows) {
-                val rule = row.task.rule
+                val rule = row.task.rule(weekStart)
                 if (rule.isFlexible) {
                     if (row.dayCounts[i] > 0) anyTime += row.category?.color ?: NoCategoryColor
                     continue
@@ -220,7 +233,7 @@ class DashboardViewModel(private val c: AppContainer) : ViewModel() {
         }
 
         DashState(
-            mode = v.mode, from = from, to = to, today = today,
+            mode = v.mode, from = from, to = to, today = today, weekStart = weekStart,
             rows = rows.sortedWith(compareBy({ it.category?.sortOrder ?: Int.MAX_VALUE }, { it.task.sortOrder })),
             days = dayCells,
             overall = rows.fold(Rate.ZERO) { acc, r -> acc + r.rate },
@@ -252,13 +265,14 @@ class DashboardViewModel(private val c: AppContainer) : ViewModel() {
     fun exportMonth(context: Context, uri: Uri, month: YearMonth) = viewModelScope.launch {
         runCatching {
             withContext(Dispatchers.IO) {
+                val weekStart = c.settings.current().weekStart
                 val report = buildMonthReport(
                     month,
                     c.tasks.tasks.first(),
                     c.tasks.categories.first(),
                     c.tasks.allCompletions(),
-                    ::repeatLabel,
-                )
+                    weekStart,
+                ) { repeatLabel(it, weekStart) }
                 val resolver = context.contentResolver
                 val out = runCatching { resolver.openOutputStream(uri, "wt") }.getOrNull() ?: resolver.openOutputStream(uri)
                 checkNotNull(out) { "파일을 열 수 없어요" }.use { Xlsx.write(report, it) }
@@ -423,16 +437,17 @@ private fun WeekHeader(state: DashState) {
         state.days.forEach { cell ->
             val isToday = cell.date == state.today
             Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                val weekend = weekendColor(cell.date.dayOfWeek)
                 Text(
                     dayLabel(cell.date.dayOfWeek),
                     style = MaterialTheme.typography.labelSmall,
-                    color = if (isToday) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (isToday) MaterialTheme.colorScheme.primary else weekend ?: MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
                     "${cell.date.dayOfMonth}",
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal,
-                    color = if (isToday) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                    color = if (isToday) MaterialTheme.colorScheme.primary else weekend ?: MaterialTheme.colorScheme.onSurface,
                 )
             }
         }
@@ -444,7 +459,7 @@ private fun WeekRow(row: DashRow) {
     val color = Color(row.category?.color ?: NoCategoryColor)
     Row(Modifier.fillMaxWidth().height(44.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.width(NameWidth).padding(end = 4.dp)) {
-            Text(row.task.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
+            TaskName(row.task.title)
             val period = row.period
             if (period != null) {
                 val text = (if (period.monthly) "이달 " else "") + "${period.doneDays}/${period.needDays}일" + when (period.state) {
@@ -477,6 +492,27 @@ private fun WeekRow(row: DashRow) {
     }
 }
 
+/** A task name that shows the whole name in a tooltip when tapped (for names cut off by the narrow column). */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TaskName(title: String) {
+    val tooltip = rememberTooltipState(isPersistent = true)
+    val scope = rememberCoroutineScope()
+    TooltipBox(
+        positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
+        tooltip = { PlainTooltip { Text(title) } },
+        state = tooltip,
+    ) {
+        Text(
+            title,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.clickable(onClickLabel = "전체 이름 보기") { scope.launch { tooltip.show() } },
+        )
+    }
+}
+
 /** One day's mark. Multi-count tasks show how many times they were done that day. */
 @Composable
 private fun SlotMark(state: SlotState?, color: Color, count: Int = 0) {
@@ -497,21 +533,28 @@ private fun SlotMark(state: SlotState?, color: Color, count: Int = 0) {
 
 @Composable
 private fun MonthGrid(state: DashState) {
-    val lead = state.from.dayOfWeek.value - 1 // Monday first
+    val week = weekOrder(state.weekStart)
+    val lead = week.indexOf(state.from.dayOfWeek)
     val cells: List<DayCell?> = List(lead) { null } + state.days
     val primary = MaterialTheme.colorScheme.primary
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp)) {
             Row(Modifier.fillMaxWidth()) {
-                java.time.DayOfWeek.values().forEach {
-                    Text(dayLabel(it), Modifier.weight(1f), textAlign = TextAlign.Center, style = MaterialTheme.typography.labelSmall)
+                week.forEach {
+                    Text(
+                        dayLabel(it),
+                        Modifier.weight(1f),
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = weekendColor(it) ?: MaterialTheme.colorScheme.onSurface,
+                    )
                 }
             }
             Spacer(Modifier.height(4.dp))
-            cells.chunked(7).forEach { week ->
+            cells.chunked(7).forEach { days ->
                 Row(Modifier.fillMaxWidth()) {
                     for (i in 0 until 7) {
-                        val cell = week.getOrNull(i)
+                        val cell = days.getOrNull(i)
                         Box(Modifier.weight(1f).aspectRatio(1f).padding(2.dp), contentAlignment = Alignment.Center) {
                             if (cell != null) {
                                 val closed = !cell.date.isAfter(state.today)
@@ -530,7 +573,8 @@ private fun MonthGrid(state: DashState) {
                                     Text(
                                         "${cell.date.dayOfMonth}",
                                         style = MaterialTheme.typography.labelMedium,
-                                        color = if (closed && ratio > 0.5f) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+                                        color = if (closed && ratio > 0.5f) MaterialTheme.colorScheme.onPrimary
+                                        else weekendColor(cell.date.dayOfWeek) ?: MaterialTheme.colorScheme.onSurface,
                                     )
                                     if (cell.anyTime.isNotEmpty()) {
                                         // "Any time" tasks worked on this day.
