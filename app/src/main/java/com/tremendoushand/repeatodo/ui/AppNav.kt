@@ -5,14 +5,20 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.unit.dp
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ListAlt
 import androidx.compose.material.icons.outlined.BarChart
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Today
 import androidx.compose.material3.Icon
-import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -61,7 +67,9 @@ fun RepeatodoNavHost() {
     Scaffold(
         bottomBar = {
             if (tabs.any { it.route == route }) {
-                NavigationBar {
+                // Slimmer than the stock 80dp bar; the inset keeps it clear of the system navigation.
+                Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
+                    Row(Modifier.fillMaxWidth().navigationBarsPadding().height(64.dp)) {
                     tabs.forEach { tab ->
                         NavigationBarItem(
                             selected = route == tab.route,
@@ -73,8 +81,9 @@ fun RepeatodoNavHost() {
                                 }
                             },
                             icon = { Icon(tab.icon, contentDescription = null) },
-                            label = { Text(tab.label) },
+                            label = { Text(tab.label, style = MaterialTheme.typography.labelSmall) },
                         )
+                    }
                     }
                 }
             }

@@ -70,23 +70,29 @@ class CalendarSync(
         withContext(Dispatchers.IO) {
             if (!hasPermission()) return@withContext
             val s = settings.current()
-            val calendarId = s.calendarId
-            val links = deviceDb.calendarLinks().all().associateBy { it.taskId }
-            val wanted = if (s.calendarEnabled && calendarId != null) {
-                db.tasks().active().filter { it.showInCalendar }
-            } else {
-                emptyList()
-            }
-            val wantedIds = wanted.map { it.id }.toSet()
+            // Calendar ids are per device (settings may come from a backup), so only use ones that exist here.
+            val available = calendars().map { it.id }.toSet()
+            val default = s.calendarId?.takeIf { it in available }
+            fun target(task: TaskEntity): Long? =
+                task.categoryId?.let { s.categoryCalendars[it] }?.takeIf { it in available } ?: default
 
+            val links = deviceDb.calendarLinks().all().associateBy { it.taskId }
+            val wanted: Map<String, Pair<TaskEntity, Long>> = if (s.calendarEnabled) {
+                db.tasks().active().filter { it.showInCalendar }
+                    .mapNotNull { task -> target(task)?.let { task.id to (task to it) } }
+                    .toMap()
+            } else {
+                emptyMap()
+            }
+
+            // Drop events for tasks no longer shown, or that moved to another calendar.
             for (link in links.values) {
-                if (link.taskId !in wantedIds || link.calendarId != calendarId) {
+                if (wanted[link.taskId]?.second != link.calendarId) {
                     deleteEvent(link.eventId)
                     deviceDb.calendarLinks().delete(link.taskId)
                 }
             }
-            if (calendarId == null) return@withContext
-            for (task in wanted) {
+            for ((task, calendarId) in wanted.values) {
                 val values = eventValues(task, calendarId) ?: continue
                 val link = links[task.id]?.takeIf { it.calendarId == calendarId }
                 val updated = link != null && runCatching {

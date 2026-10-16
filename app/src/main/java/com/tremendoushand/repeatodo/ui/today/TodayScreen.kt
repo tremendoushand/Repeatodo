@@ -215,7 +215,11 @@ private fun ProgressHeader(state: TodayState) {
             )
             Spacer(Modifier.height(8.dp))
             LinearProgressIndicator(
-                progress = { if (all.isEmpty()) 0f else done.toFloat() / all.size },
+                // Multi-count tasks fill the bar part way as they progress.
+                progress = {
+                    if (all.isEmpty()) 0f
+                    else all.sumOf { it.count.coerceAtMost(it.task.targetCount).toDouble() / it.task.targetCount }.toFloat() / all.size
+                },
                 modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
             )
         }

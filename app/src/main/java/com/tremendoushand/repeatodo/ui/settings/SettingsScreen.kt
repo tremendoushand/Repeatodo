@@ -95,6 +95,7 @@ import java.util.Locale
 class SettingsViewModel(private val c: AppContainer) : ViewModel() {
     val settings = c.settings.settings.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), AppSettings())
     val calendars = MutableStateFlow<List<DeviceCalendar>>(emptyList())
+    val categories = c.tasks.categories.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val syncing = MutableStateFlow(false)
     private val _messages = Channel<String>(Channel.BUFFERED)
     val messages = _messages.receiveAsFlow()
@@ -130,6 +131,11 @@ class SettingsViewModel(private val c: AppContainer) : ViewModel() {
             return@launch
         }
         c.settings.setCalendar(true, id)
+        c.calendar.syncAll()
+    }
+
+    fun setCategoryCalendar(categoryId: String, calendarId: Long?) = viewModelScope.launch {
+        c.settings.setCategoryCalendar(categoryId, calendarId)
         c.calendar.syncAll()
     }
 
@@ -207,6 +213,7 @@ fun SettingsScreen() {
     val vm = appViewModel { SettingsViewModel(it) }
     val s by vm.settings.collectAsStateWithLifecycle()
     val calendars by vm.calendars.collectAsStateWithLifecycle()
+    val categories by vm.categories.collectAsStateWithLifecycle()
     val syncing by vm.syncing.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -345,7 +352,25 @@ fun SettingsScreen() {
                 },
             )
             if (s.calendarEnabled) {
-                CalendarPicker(calendars, s.calendarId) { vm.enableCalendar(it) }
+                Text("기본 캘린더")
+                CalendarPicker(calendars, s.calendarId) { id -> if (id != null) vm.enableCalendar(id) }
+                if (categories.isNotEmpty()) {
+                    Text("카테고리별 캘린더")
+                    Hint("카테고리마다 다른 캘린더에 넣을 수 있어요. 고르지 않으면 기본 캘린더에 들어가요.")
+                    categories.forEach { cat ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            ColorDot(cat.color)
+                            Spacer(Modifier.width(8.dp))
+                            Text(cat.name, Modifier.width(88.dp), maxLines = 1)
+                            CalendarPicker(
+                                calendars,
+                                s.categoryCalendars[cat.id],
+                                modifier = Modifier.weight(1f),
+                                defaultLabel = "기본 캘린더",
+                            ) { id -> vm.setCategoryCalendar(cat.id, id) }
+                        }
+                    }
+                }
             }
 
             HorizontalDivider()
@@ -448,20 +473,30 @@ private fun Warning(text: String, onFix: () -> Unit) {
 }
 
 @Composable
-private fun CalendarPicker(calendars: List<DeviceCalendar>, selected: Long?, onSelect: (Long) -> Unit) {
+private fun CalendarPicker(
+    calendars: List<DeviceCalendar>,
+    selected: Long?,
+    modifier: Modifier = Modifier,
+    /** When set, offers a "use the default" choice that reports null. */
+    defaultLabel: String? = null,
+    onSelect: (Long?) -> Unit,
+) {
     var open by remember { mutableStateOf(false) }
     val current = calendars.firstOrNull { it.id == selected }
-    Box {
+    Box(modifier) {
         OutlinedButton(onClick = { open = true }, modifier = Modifier.fillMaxWidth()) {
             current?.let { ColorDot(it.color.toLong() and 0xFFFFFFFFL) }
             Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
-                Text(current?.name ?: "캘린더 선택")
+                Text(current?.name ?: defaultLabel ?: "캘린더 선택", maxLines = 1)
                 current?.account?.takeIf { it != current.name }?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             }
             Icon(Icons.Filled.ArrowDropDown, null)
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            if (defaultLabel != null) {
+                DropdownMenuItem(text = { Text(defaultLabel) }, onClick = { onSelect(null); open = false })
+            }
             calendars.forEach { cal ->
                 DropdownMenuItem(
                     text = { Text("${cal.name} (${cal.account})") },

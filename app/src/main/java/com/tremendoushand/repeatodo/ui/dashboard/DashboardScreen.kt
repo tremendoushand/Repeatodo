@@ -83,7 +83,15 @@ data class DashRow(
     /** States of "any time" occurrences in the period, shown instead of [cells]. */
     val flexible: List<SlotState>,
     val rate: Rate,
-)
+    /** Times done on each day of the week view (same order as [cells]); only shown for multi-count tasks. */
+    val dayCounts: List<Int> = emptyList(),
+    /** Times done across the period. */
+    val amount: Int = 0,
+    /** Times needed across the occurrences counted so far. */
+    val amountTarget: Int = 0,
+) {
+    val multiCount: Boolean get() = task.targetCount > 1
+}
 
 data class DayCell(val date: LocalDate, val done: Int, val due: Int)
 
@@ -128,6 +136,9 @@ class DashboardViewModel(c: AppContainer) : ViewModel() {
                 },
                 flexible = if (rule.isFlexible) occurrences.map { slotState(it, isDone(it.key), today) } else emptyList(),
                 rate = rule.rateBetween(from, to, today, isDone),
+                dayCounts = if (rule.isFlexible) emptyList() else days.map { d -> taskCounts[d.toEpochDay()] ?: 0 },
+                amount = occurrences.sumOf { taskCounts[it.key] ?: 0 },
+                amountTarget = occurrences.count { !it.start.isAfter(today) } * task.targetCount,
             )
         }
 
@@ -257,7 +268,7 @@ private fun SummaryCard(state: DashState) {
                 )
             }
             Text(
-                "아직 끝나지 않은 날은 완료했을 때만 계산해요.",
+                "오늘까지 해야 했던 일 중 끝낸 비율이에요. 여러 번 하는 일은 목표 횟수를 다 채워야 완료예요.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -309,14 +320,17 @@ private fun WeekHeader(state: DashState) {
 @Composable
 private fun WeekRow(row: DashRow) {
     val color = Color(row.category?.color ?: NoCategoryColor)
-    Row(Modifier.fillMaxWidth().height(36.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            row.task.title,
-            Modifier.width(NameWidth).padding(end = 4.dp),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            style = MaterialTheme.typography.bodyMedium,
-        )
+    Row(Modifier.fillMaxWidth().height(44.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.width(NameWidth).padding(end = 4.dp)) {
+            Text(row.task.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
+            if (row.multiCount) {
+                Text(
+                    "${row.amount}/${row.amountTarget}회",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
         if (row.flexible.isNotEmpty()) {
             val label = when {
                 row.flexible.all { it == SlotState.DONE } -> "완료"
@@ -325,20 +339,27 @@ private fun WeekRow(row: DashRow) {
             }
             Text(label, Modifier.weight(1f), textAlign = TextAlign.Center, style = MaterialTheme.typography.bodySmall, color = color)
         } else {
-            row.cells.forEach { state ->
-                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) { SlotMark(state, color) }
+            row.cells.forEachIndexed { i, state ->
+                val count = if (row.multiCount) row.dayCounts.getOrNull(i) ?: 0 else 0
+                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) { SlotMark(state, color, count) }
             }
         }
     }
 }
 
+/** One day's mark. Multi-count tasks show how many times they were done that day. */
 @Composable
-private fun SlotMark(state: SlotState?, color: Color) {
-    val m = Modifier.size(18.dp)
+private fun SlotMark(state: SlotState?, color: Color, count: Int = 0) {
+    val m = Modifier.size(22.dp)
+    val label: @Composable (Color) -> Unit = { textColor ->
+        if (count > 0) Text("$count", style = MaterialTheme.typography.labelSmall, color = textColor, maxLines = 1)
+    }
     when (state) {
-        SlotState.DONE -> Box(m.background(color, CircleShape))
-        SlotState.MISSED -> Box(m.border(2.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.6f), CircleShape))
-        SlotState.PENDING -> Box(m.border(2.dp, color, CircleShape))
+        SlotState.DONE -> Box(m.background(color, CircleShape), contentAlignment = Alignment.Center) { label(Color.White) }
+        SlotState.MISSED -> Box(m.border(2.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.6f), CircleShape), contentAlignment = Alignment.Center) {
+            label(MaterialTheme.colorScheme.error)
+        }
+        SlotState.PENDING -> Box(m.border(2.dp, color, CircleShape), contentAlignment = Alignment.Center) { label(color) }
         SlotState.UPCOMING -> Box(m.border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape))
         null -> Box(Modifier.size(4.dp).background(MaterialTheme.colorScheme.outlineVariant, CircleShape))
     }
@@ -363,7 +384,7 @@ private fun MonthGrid(state: DashState) {
                         val cell = week.getOrNull(i)
                         Box(Modifier.weight(1f).aspectRatio(1f).padding(2.dp), contentAlignment = Alignment.Center) {
                             if (cell != null) {
-                                val closed = cell.date.isBefore(state.today) || cell.done > 0
+                                val closed = !cell.date.isAfter(state.today)
                                 val ratio = if (cell.due == 0 || !closed) 0f else cell.done.toFloat() / cell.due
                                 val bg = when {
                                     cell.due == 0 -> Color.Transparent
@@ -406,6 +427,14 @@ private fun RateRow(row: DashRow) {
             Spacer(Modifier.width(8.dp))
             Text(row.task.title, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text("${row.rate.done}/${row.rate.counted}  ${row.rate.percentText()}", style = MaterialTheme.typography.bodySmall)
+        }
+        if (row.multiCount) {
+            Text(
+                "누적 ${row.amount}회 · 목표 ${row.amountTarget}회 (한 번에 ${row.task.targetCount}회)",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 20.dp),
+            )
         }
         Spacer(Modifier.height(4.dp))
         LinearProgressIndicator(

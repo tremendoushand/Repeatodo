@@ -23,8 +23,11 @@ data class Rate(val done: Int, val counted: Int) {
 }
 
 /**
- * Completion rate of a rule over [from]..[to]. Occurrences still open or upcoming
- * only count once they are done, so an unfinished day never drags the rate down early.
+ * Completion rate of a rule over [from]..[to].
+ *
+ * A dated occurrence counts from its day on, so today's unfinished tasks show as not done yet.
+ * An "any time this week/month" occurrence only counts once it's done or its period has ended,
+ * so it doesn't drag the rate down while there is still time.
  */
 fun RepeatRule.rateBetween(
     from: LocalDate,
@@ -38,7 +41,8 @@ fun RepeatRule.rateBetween(
         when (slotState(occ, isDone(occ.key), today)) {
             SlotState.DONE -> { done++; counted++ }
             SlotState.MISSED -> counted++
-            else -> Unit
+            SlotState.PENDING -> if (!occ.flexible) counted++
+            SlotState.UPCOMING -> Unit
         }
     }
     return Rate(done, counted)

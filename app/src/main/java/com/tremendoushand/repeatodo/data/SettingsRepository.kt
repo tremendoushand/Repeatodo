@@ -19,7 +19,10 @@ data class AppSettings(
     val digestTimes: List<Int> = listOf(8 * 60),
     val themeMode: ThemeMode = ThemeMode.SYSTEM,
     val calendarEnabled: Boolean = false,
+    /** Default calendar for tasks. */
     val calendarId: Long? = null,
+    /** Calendar per category id; categories not listed use [calendarId]. */
+    val categoryCalendars: Map<String, Long> = emptyMap(),
     val driveConnected: Boolean = false,
     /** 0 means manual only. */
     val syncIntervalHours: Int = 24,
@@ -37,6 +40,7 @@ class SettingsRepository(private val context: Context) {
         val themeMode = stringPreferencesKey("theme_mode")
         val calendarEnabled = booleanPreferencesKey("calendar_enabled")
         val calendarId = longPreferencesKey("calendar_id")
+        val categoryCalendars = stringPreferencesKey("category_calendars")
         val driveConnected = booleanPreferencesKey("drive_connected")
         val syncInterval = intPreferencesKey("sync_interval_hours")
         val syncWifiOnly = booleanPreferencesKey("sync_wifi_only")
@@ -58,6 +62,10 @@ class SettingsRepository(private val context: Context) {
             themeMode = this[Keys.themeMode]?.let { runCatching { ThemeMode.valueOf(it) }.getOrNull() } ?: d.themeMode,
             calendarEnabled = this[Keys.calendarEnabled] ?: d.calendarEnabled,
             calendarId = this[Keys.calendarId],
+            categoryCalendars = this[Keys.categoryCalendars].orEmpty().split(',').mapNotNull { entry ->
+                val (cat, cal) = entry.split('=').takeIf { it.size == 2 } ?: return@mapNotNull null
+                cal.toLongOrNull()?.let { cat to it }
+            }.toMap(),
             driveConnected = this[Keys.driveConnected] ?: d.driveConnected,
             syncIntervalHours = this[Keys.syncInterval] ?: d.syncIntervalHours,
             syncWifiOnly = this[Keys.syncWifiOnly] ?: d.syncWifiOnly,
@@ -76,6 +84,16 @@ class SettingsRepository(private val context: Context) {
     suspend fun setCalendar(enabled: Boolean, calendarId: Long?) = context.dataStore.edit {
         it[Keys.calendarEnabled] = enabled
         if (calendarId != null) it[Keys.calendarId] = calendarId else it.remove(Keys.calendarId)
+    }
+
+    /** Sets the calendar for one category, or null to use the default calendar. */
+    suspend fun setCategoryCalendar(categoryId: String, calendarId: Long?) = context.dataStore.edit { prefs ->
+        val current = prefs[Keys.categoryCalendars].orEmpty().split(',')
+            .mapNotNull { e -> e.split('=').takeIf { it.size == 2 }?.let { it[0] to it[1] } }
+            .toMap()
+            .toMutableMap()
+        if (calendarId == null) current.remove(categoryId) else current[categoryId] = calendarId.toString()
+        prefs[Keys.categoryCalendars] = current.entries.joinToString(",") { "${it.key}=${it.value}" }
     }
 
     suspend fun setDriveConnected(connected: Boolean) = context.dataStore.edit {

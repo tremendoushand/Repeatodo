@@ -84,13 +84,35 @@ class RecurrenceTest {
     }
 
     @Test
-    fun rate_ignoresOpenSlots() {
+    fun rate_countsTodayButNotUpcoming() {
         val rule = RepeatRule(RepeatType.DAILY, startDate = start)
         val today = LocalDate.of(2026, 10, 5)
         val done = setOf(LocalDate.of(2026, 10, 1).toEpochDay(), LocalDate.of(2026, 10, 2).toEpochDay())
         val rate = rule.rateBetween(start, LocalDate.of(2026, 10, 31), today) { it in done }
-        // 1..4 are closed (2 done, 2 missed), 5 is open, the rest upcoming.
-        assertEquals(Rate(2, 4), rate)
+        // 1..4 are closed (2 done, 2 missed), 5 is today and not done yet, the rest upcoming.
+        assertEquals(Rate(2, 5), rate)
+    }
+
+    @Test
+    fun rate_mixedSingleAndMultiCountTasksToday() {
+        // A single task done today and an 8-times-a-day task done 3 times: the day is 1 of 2, not 100%.
+        val today = LocalDate.of(2026, 10, 5)
+        val single = RepeatRule(RepeatType.DAILY, startDate = today)
+        val multi = RepeatRule(RepeatType.DAILY, startDate = today)
+        val counts = mapOf("single" to 1, "multi" to 3)
+        val targets = mapOf("single" to 1, "multi" to 8)
+        val total = listOf("single" to single, "multi" to multi).fold(Rate.ZERO) { acc, (id, rule) ->
+            acc + rule.rateBetween(today, today.plusDays(6), today) { (counts[id] ?: 0) >= targets.getValue(id) }
+        }
+        assertEquals(Rate(1, 2), total)
+    }
+
+    @Test
+    fun rate_flexibleCountsOnlyWhenDoneOrOver() {
+        val rule = RepeatRule(RepeatType.WEEKLY, weekDays = 0, startDate = start)
+        val today = LocalDate.of(2026, 10, 7)
+        assertEquals(Rate(0, 0), rule.rateBetween(LocalDate.of(2026, 10, 5), LocalDate.of(2026, 10, 11), today) { false })
+        assertEquals(Rate(1, 1), rule.rateBetween(LocalDate.of(2026, 10, 5), LocalDate.of(2026, 10, 11), today) { true })
     }
 
     @Test
