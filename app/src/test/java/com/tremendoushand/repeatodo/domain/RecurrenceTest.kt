@@ -102,7 +102,9 @@ class RecurrenceTest {
         val counts = mapOf("single" to 1, "multi" to 3)
         val targets = mapOf("single" to 1, "multi" to 8)
         val total = listOf("single" to single, "multi" to multi).fold(Rate.ZERO) { acc, (id, rule) ->
-            acc + rule.rateBetween(today, today.plusDays(6), today) { (counts[id] ?: 0) >= targets.getValue(id) }
+            acc + rule.rateBetween(today, today.plusDays(6), today) { key ->
+                key == today.toEpochDay() && (counts[id] ?: 0) >= targets.getValue(id)
+            }
         }
         assertEquals(Rate(1, 2), total)
     }
