@@ -40,11 +40,12 @@ object WeekDays {
 }
 
 /**
- * One slot of a task that can be completed.
+ * One slot of a task that can be completed: a due day, or for flexible ("any time this
+ * week/month") rules the whole period. Weeks run Monday to Sunday.
  *
- * [key] identifies the slot: the epoch day of the due date, or of the period's first day
- * for flexible ("any time this week/month") rules. For flexible weekly rules the week is
- * always counted Monday to Sunday so that keys stay stable when the display week start changes.
+ * [key] is the epoch day of the due date, or of the period's first day for flexible rules.
+ * Completions are always recorded per day (keyed by that day's epoch day); for a flexible
+ * period the days inside it are added up, see [isDone].
  */
 data class Occurrence(
     val key: Long,
@@ -142,7 +143,7 @@ fun RepeatRule.previousOccurrence(occ: Occurrence): Occurrence? {
  * Consecutive completed occurrences ending now. The occurrence open today doesn't
  * break the streak while it is still pending.
  */
-fun RepeatRule.streak(isDone: (Long) -> Boolean, today: LocalDate): Int {
+fun RepeatRule.streak(isDone: (Occurrence) -> Boolean, today: LocalDate): Int {
     var occ: Occurrence? = occurrenceOn(today) ?: run {
         // Not due today: start from the most recent past occurrence.
         val probe = Occurrence(today.toEpochDay(), today, today, false)
@@ -152,7 +153,7 @@ fun RepeatRule.streak(isDone: (Long) -> Boolean, today: LocalDate): Int {
     var first = true
     var guard = 0
     while (occ != null && guard++ < 1000) {
-        if (isDone(occ.key)) {
+        if (isDone(occ)) {
             count++
         } else if (!(first && occ.contains(today))) {
             break
@@ -162,3 +163,24 @@ fun RepeatRule.streak(isDone: (Long) -> Boolean, today: LocalDate): Int {
     }
     return count
 }
+
+/**
+ * What it takes to finish a task: [perDay] times on a day, and for flexible rules on
+ * [daysPerPeriod] different days of the week/month (e.g. rosary 5 times, on 2 days a week).
+ */
+data class Goal(val perDay: Int = 1, val daysPerPeriod: Int = 1)
+
+/** The days of [occ] on or after the rule's start date. */
+fun RepeatRule.daysOf(occ: Occurrence): List<LocalDate> {
+    val first = if (occ.start.isBefore(startDate)) startDate else occ.start
+    return generateSequence(first) { it.plusDays(1) }.takeWhile { !it.isAfter(occ.end) }.toList()
+}
+
+/** Days of a flexible period on which the per-day goal was met. */
+fun RepeatRule.doneDays(occ: Occurrence, countOn: (Long) -> Int, goal: Goal): Int =
+    daysOf(occ).count { countOn(it.toEpochDay()) >= goal.perDay }
+
+/** Whether [occ] is finished, given the count recorded on each day. */
+fun RepeatRule.isDone(occ: Occurrence, countOn: (Long) -> Int, goal: Goal): Boolean =
+    if (!occ.flexible) countOn(occ.key) >= goal.perDay
+    else doneDays(occ, countOn, goal) >= goal.daysPerPeriod

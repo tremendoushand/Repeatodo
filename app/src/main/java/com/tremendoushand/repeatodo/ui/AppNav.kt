@@ -61,6 +61,7 @@ fun RepeatodoNavHost() {
     val entry by nav.currentBackStackEntryAsState()
     val route = entry?.destination?.route
     val openEditor: (String?) -> Unit = { id -> nav.navigate(if (id == null) "edit" else "edit?taskId=$id") }
+    val newTaskIn: (String?) -> Unit = { categoryId -> nav.navigate(if (categoryId == null) "edit" else "edit?categoryId=$categoryId") }
 
     AskNotificationPermissionOnce()
 
@@ -93,14 +94,21 @@ fun RepeatodoNavHost() {
             composable("today") { TodayScreen(onAdd = { openEditor(null) }, onOpen = { openEditor(it) }) }
             composable("dashboard") { DashboardScreen() }
             composable("tasks") {
-                TaskListScreen(onAdd = { openEditor(null) }, onOpen = { openEditor(it) }, onCategories = { nav.navigate("categories") })
+                TaskListScreen(onAdd = newTaskIn, onOpen = { openEditor(it) }, onCategories = { nav.navigate("categories") })
             }
             composable("settings") { SettingsScreen() }
             composable(
-                "edit?taskId={taskId}",
-                arguments = listOf(navArgument("taskId") { type = NavType.StringType; nullable = true; defaultValue = null }),
+                "edit?taskId={taskId}&categoryId={categoryId}",
+                arguments = listOf(
+                    navArgument("taskId") { type = NavType.StringType; nullable = true; defaultValue = null },
+                    navArgument("categoryId") { type = NavType.StringType; nullable = true; defaultValue = null },
+                ),
             ) { backStack ->
-                TaskEditScreen(taskId = backStack.arguments?.getString("taskId"), onDone = { nav.popBackStack() })
+                TaskEditScreen(
+                    taskId = backStack.arguments?.getString("taskId"),
+                    categoryId = backStack.arguments?.getString("categoryId"),
+                    onDone = { nav.popBackStack() },
+                )
             }
             composable("categories") { CategoryScreen(onBack = { nav.popBackStack() }) }
         }

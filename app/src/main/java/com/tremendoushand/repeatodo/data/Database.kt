@@ -7,6 +7,8 @@ import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.Upsert
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -72,6 +74,9 @@ interface CompletionDao {
     )
     suspend fun doneCount(taskId: String): Int
 
+    @Query("SELECT * FROM completions WHERE taskId = :taskId AND occurrenceKey BETWEEN :fromKey AND :toKey")
+    suspend fun between(taskId: String, fromKey: Long, toKey: Long): List<CompletionEntity>
+
     @Upsert
     suspend fun upsert(items: List<CompletionEntity>)
 
@@ -96,7 +101,7 @@ interface CalendarLinkDao {
 
 @Database(
     entities = [CategoryEntity::class, TaskEntity::class, CompletionEntity::class],
-    version = 1,
+    version = 2,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -105,8 +110,17 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun completions(): CompletionDao
 
     companion object {
+        /** 1 → 2: "any time" tasks can ask for several days per week/month. */
+        private val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE tasks ADD COLUMN periodTimes INTEGER NOT NULL DEFAULT 1")
+            }
+        }
+
         fun create(context: Context): AppDatabase =
-            Room.databaseBuilder(context, AppDatabase::class.java, "repeatodo.db").build()
+            Room.databaseBuilder(context, AppDatabase::class.java, "repeatodo.db")
+                .addMigrations(MIGRATION_1_2)
+                .build()
     }
 }
 

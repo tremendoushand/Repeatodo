@@ -27,6 +27,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
@@ -45,6 +46,7 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -139,10 +141,11 @@ class SettingsViewModel(private val c: AppContainer) : ViewModel() {
         c.calendar.syncAll()
     }
 
-    fun disableCalendar() = viewModelScope.launch {
+    /** Turns calendar sync off and deletes every event Repeatodo put in the device calendars. */
+    fun clearCalendar() = viewModelScope.launch {
         c.settings.setCalendar(false, settings.value.calendarId)
-        c.calendar.removeAll()
-        _messages.send("캘린더에서 Repeatodo 일정을 지웠어요.")
+        val removed = c.calendar.removeAll()
+        _messages.send(if (removed > 0) "캘린더에서 Repeatodo 일정 ${removed}개를 지웠어요." else "캘린더에 지울 Repeatodo 일정이 없어요.")
     }
 
     fun onDriveConnected() = viewModelScope.launch {
@@ -231,6 +234,10 @@ fun SettingsScreen() {
     val notificationLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { resumeTick++ }
     val calendarLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
         if (result.values.all { it }) vm.enableCalendar() else vm.showMessage("캘린더 권한이 있어야 일정을 표시할 수 있어요.")
+    }
+    var confirmClearCalendar by remember { mutableStateOf(false) }
+    val clearCalendarLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+        if (result.values.all { it }) vm.clearCalendar() else vm.showMessage("캘린더 권한이 있어야 일정을 지울 수 있어요.")
     }
     val authLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
@@ -343,7 +350,7 @@ fun SettingsScreen() {
                 checked = s.calendarEnabled,
                 onChange = { on ->
                     when {
-                        !on -> vm.disableCalendar()
+                        !on -> confirmClearCalendar = true
                         vm.hasCalendarPermission() -> vm.enableCalendar()
                         else -> calendarLauncher.launch(
                             arrayOf(android.Manifest.permission.READ_CALENDAR, android.Manifest.permission.WRITE_CALENDAR),
@@ -372,6 +379,8 @@ fun SettingsScreen() {
                     }
                 }
             }
+            OutlinedButton(onClick = { confirmClearCalendar = true }) { Text("캘린더에서 Repeatodo 일정 모두 지우기") }
+            Hint("앱을 삭제하기 전에 눌러 주세요. 앱을 먼저 지우면 캘린더에 일정이 남아요.")
 
             HorizontalDivider()
             Section("구글 드라이브 동기화")
@@ -433,6 +442,31 @@ fun SettingsScreen() {
             initialMinutes = 20 * 60,
             onDismiss = { addingTime = false },
             onConfirm = { vm.addDigestTime(it); addingTime = false },
+        )
+    }
+    if (confirmClearCalendar) {
+        AlertDialog(
+            onDismissRequest = { confirmClearCalendar = false },
+            title = { Text("캘린더 일정을 모두 지울까요?") },
+            text = {
+                Text(
+                    "Repeatodo가 폰 캘린더에 만든 반복 일정을 모두 지우고 캘린더 연동을 꺼요. 할 일과 기록은 그대로 남아요.\n\n" +
+                        "앱을 삭제하려면 이걸 먼저 해 주세요. 앱을 먼저 지우면 캘린더에 일정이 남아요.",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmClearCalendar = false
+                    if (vm.hasCalendarPermission()) {
+                        vm.clearCalendar()
+                    } else {
+                        clearCalendarLauncher.launch(
+                            arrayOf(android.Manifest.permission.READ_CALENDAR, android.Manifest.permission.WRITE_CALENDAR),
+                        )
+                    }
+                }) { Text("모두 지우기", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { confirmClearCalendar = false }) { Text("취소") } },
         )
     }
 }

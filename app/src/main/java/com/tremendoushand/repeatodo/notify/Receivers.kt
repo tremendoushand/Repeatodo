@@ -6,6 +6,9 @@ import android.content.Intent
 import com.tremendoushand.repeatodo.AppContainer
 import com.tremendoushand.repeatodo.RepeatodoApp
 import com.tremendoushand.repeatodo.domain.RepeatType
+import com.tremendoushand.repeatodo.data.TaskEntity
+import com.tremendoushand.repeatodo.domain.doneDays
+import com.tremendoushand.repeatodo.domain.isDone
 import com.tremendoushand.repeatodo.domain.occurrenceOn
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -37,30 +40,37 @@ class ReminderReceiver : BroadcastReceiver() {
             "task" -> {
                 val task = c.tasks.task(value)
                 if (task != null && !task.deleted && !task.archived && task.reminderMinutes != null) {
-                    val occ = task.rule.occurrenceOn(today)
-                    if (occ != null) {
-                        val count = c.tasks.completion(task.id, occ.key)?.count ?: 0
-                        if (count < task.targetCount) {
-                            val subtitle = if (occ.flexible) {
-                                if (task.repeatType == RepeatType.WEEKLY) "이번 주 안에" else "이번 달 안에"
-                            } else null
-                            Notifications.showTask(context, task, occ.key, count, subtitle)
-                        }
-                    }
+                    val left = remaining(c, task, today)
+                    if (left != null) Notifications.showTask(context, task, today.toEpochDay(), left.todayCount, left.subtitle)
                 }
             }
             "digest" -> {
                 val pending = c.tasks.activeTasks()
                     .filter { it.reminderMinutes == null }
-                    .filter { task ->
-                        val occ = task.rule.occurrenceOn(today) ?: return@filter false
-                        (c.tasks.completion(task.id, occ.key)?.count ?: 0) < task.targetCount
-                    }
+                    .filter { remaining(c, it, today) != null }
                 Notifications.showDigest(context, pending.map { it.title })
             }
         }
         c.reminders.rescheduleAll()
     }
+}
+
+private class Remaining(val todayCount: Int, val subtitle: String?)
+
+/** What's still left of [task] today, or null when there is nothing to remind about. */
+private suspend fun remaining(c: AppContainer, task: TaskEntity, today: LocalDate): Remaining? {
+    val rule = task.rule
+    val occ = rule.occurrenceOn(today) ?: return null
+    val counts = c.tasks.counts(task.id, occ.start.toEpochDay(), occ.end.toEpochDay())
+    val todayCount = counts[today.toEpochDay()] ?: 0
+    val goal = task.goal
+    // Nothing left when today's part is done, or the whole week/month already is.
+    if (todayCount >= goal.perDay || rule.isDone(occ, { counts[it] ?: 0 }, goal)) return null
+    val subtitle = if (occ.flexible) {
+        val period = if (task.repeatType == RepeatType.WEEKLY) "이번 주" else "이번 달"
+        "$period ${rule.doneDays(occ, { counts[it] ?: 0 }, goal)}/${goal.daysPerPeriod}일"
+    } else null
+    return Remaining(todayCount, subtitle)
 }
 
 /** The "완료" button on a task notification. */

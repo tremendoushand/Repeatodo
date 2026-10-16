@@ -42,6 +42,7 @@ data class TaskDto(
     val createdAt: Long = 0,
     val updatedAt: Long,
     val deleted: Boolean = false,
+    val periodTimes: Int = 1,
 )
 
 @Serializable

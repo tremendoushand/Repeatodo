@@ -75,6 +75,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -98,15 +99,27 @@ data class EditForm(
     val monthDay: Int = LocalDate.now().dayOfMonth,
     val reminderMinutes: Int? = null,
     val targetCount: Int = 1,
+    /** "Any time" rules: on how many different days of the week/month. */
+    val periodTimes: Int = 1,
     val totalCount: Int? = null,
     val startDate: LocalDate = LocalDate.now(),
     val showInCalendar: Boolean = false,
     val error: String? = null,
 ) {
     val isNew get() = original == null
+
+    val flexible: Boolean
+        get() = (type == RepeatType.WEEKLY && weekAnyDay) || (type == RepeatType.MONTHLY && monthMode == MonthMode.ANY)
+
+    /** Allowed days per period for the chosen rule. */
+    val periodRange: IntRange get() = if (type == RepeatType.WEEKLY) 1..7 else 1..28
 }
 
-class TaskEditViewModel(private val c: AppContainer, private val taskId: String?) : ViewModel() {
+class TaskEditViewModel(
+    private val c: AppContainer,
+    private val taskId: String?,
+    private val initialCategoryId: String? = null,
+) : ViewModel() {
     private val _form = MutableStateFlow(EditForm(loaded = taskId == null))
     val form: StateFlow<EditForm> = _form.asStateFlow()
     val categories = c.tasks.categories.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -133,13 +146,16 @@ class TaskEditViewModel(private val c: AppContainer, private val taskId: String?
                     monthDay = task.monthDay.takeIf { it in 1..31 } ?: LocalDate.now().dayOfMonth,
                     reminderMinutes = task.reminderMinutes,
                     targetCount = task.targetCount,
+                    periodTimes = task.periodTimes,
                     totalCount = task.totalCount,
                     startDate = LocalDate.ofEpochDay(task.startDate),
                     showInCalendar = task.showInCalendar,
                 )
             } else {
                 // New tasks show in the calendar by default once calendar sync is on.
-                _form.update { it.copy(loaded = true, showInCalendar = c.settings.current().calendarEnabled) }
+                // and start in the category picked on the task list, if any.
+                val categoryId = initialCategoryId?.takeIf { id -> c.tasks.categories.first().any { it.id == id } }
+                _form.update { it.copy(loaded = true, categoryId = categoryId, showInCalendar = c.settings.current().calendarEnabled) }
             }
         }
     }
@@ -167,6 +183,7 @@ class TaskEditViewModel(private val c: AppContainer, private val taskId: String?
             },
             reminderMinutes = f.reminderMinutes,
             targetCount = f.targetCount.coerceIn(1, 99),
+            periodTimes = if (f.flexible) f.periodTimes.coerceIn(f.periodRange) else 1,
             totalCount = f.totalCount?.coerceIn(1, 9999),
             startDate = f.startDate.toEpochDay(),
             showInCalendar = f.showInCalendar,
@@ -197,8 +214,8 @@ class TaskEditViewModel(private val c: AppContainer, private val taskId: String?
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-fun TaskEditScreen(taskId: String?, onDone: () -> Unit) {
-    val vm = appViewModel(key = "edit-$taskId") { TaskEditViewModel(it, taskId) }
+fun TaskEditScreen(taskId: String?, categoryId: String? = null, onDone: () -> Unit) {
+    val vm = appViewModel(key = "edit-$taskId") { TaskEditViewModel(it, taskId, categoryId) }
     val form by vm.form.collectAsStateWithLifecycle()
     val categories by vm.categories.collectAsStateWithLifecycle()
     val settings by vm.settings.collectAsStateWithLifecycle()
@@ -270,9 +287,11 @@ fun TaskEditScreen(taskId: String?, onDone: () -> Unit) {
                 RepeatType.WEEKLY -> {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(selected = !form.weekAnyDay, onClick = { vm.edit { it.copy(weekAnyDay = false) } }, label = { Text("요일 지정") })
-                        FilterChip(selected = form.weekAnyDay, onClick = { vm.edit { it.copy(weekAnyDay = true) } }, label = { Text("주중 아무 때나 1번") })
+                        FilterChip(selected = form.weekAnyDay, onClick = { vm.edit { it.copy(weekAnyDay = true) } }, label = { Text("주중 아무 때나") })
                     }
-                    if (!form.weekAnyDay) {
+                    if (form.weekAnyDay) {
+                        PeriodDays(form) { v -> vm.edit { it.copy(periodTimes = v) } }
+                    } else {
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             DayOfWeek.values().forEach { day ->
                                 FilterChip(
@@ -288,7 +307,10 @@ fun TaskEditScreen(taskId: String?, onDone: () -> Unit) {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(selected = form.monthMode == MonthMode.DAY, onClick = { vm.edit { it.copy(monthMode = MonthMode.DAY) } }, label = { Text("날짜 지정") })
                         FilterChip(selected = form.monthMode == MonthMode.LAST, onClick = { vm.edit { it.copy(monthMode = MonthMode.LAST) } }, label = { Text("말일") })
-                        FilterChip(selected = form.monthMode == MonthMode.ANY, onClick = { vm.edit { it.copy(monthMode = MonthMode.ANY) } }, label = { Text("월중 아무 때나 1번") })
+                        FilterChip(selected = form.monthMode == MonthMode.ANY, onClick = { vm.edit { it.copy(monthMode = MonthMode.ANY) } }, label = { Text("월중 아무 때나") })
+                    }
+                    if (form.monthMode == MonthMode.ANY) {
+                        PeriodDays(form) { v -> vm.edit { it.copy(periodTimes = v) } }
                     }
                     if (form.monthMode == MonthMode.DAY) {
                         Stepper("매월", form.monthDay, "일", 1..31) { v -> vm.edit { it.copy(monthDay = v) } }
@@ -314,8 +336,13 @@ fun TaskEditScreen(taskId: String?, onDone: () -> Unit) {
 
             HorizontalDivider()
             SectionTitle("횟수 (선택)")
-            Stepper("한 번에", form.targetCount, "회", 1..99) { v -> vm.edit { it.copy(targetCount = v) } }
-            Hint("예: 물 마시기 하루 8회. 탭할 때마다 1회씩 올라가요.")
+            if (form.flexible) {
+                Stepper("하는 날마다", form.targetCount, "회", 1..99) { v -> vm.edit { it.copy(targetCount = v) } }
+                Hint("예: 묵주기도 일주일에 2일, 하는 날마다 5단. 그날 5회를 채우면 1일로 세요.")
+            } else {
+                Stepper("한 번에", form.targetCount, "회", 1..99) { v -> vm.edit { it.copy(targetCount = v) } }
+                Hint("예: 물 마시기 하루 8회. 탭할 때마다 1회씩 올라가요.")
+            }
             SwitchRow(
                 title = "총 반복 횟수 정하기",
                 subtitle = "다 채우면 할 일이 ‘끝난 할 일’로 옮겨져요.",
@@ -383,6 +410,20 @@ fun TaskEditScreen(taskId: String?, onDone: () -> Unit) {
     }
 }
 
+/** How many different days of the week/month an "any time" task needs. */
+@Composable
+private fun PeriodDays(form: EditForm, onChange: (Int) -> Unit) {
+    val weekly = form.type == RepeatType.WEEKLY
+    Stepper(if (weekly) "일주일에" else "한 달에", form.periodTimes.coerceIn(form.periodRange), "일", form.periodRange, onChange)
+    Hint(
+        if (form.periodTimes <= 1) {
+            if (weekly) "월요일부터 일요일 사이 아무 날이나 한 번 하면 돼요." else "그 달 안에 아무 날이나 한 번 하면 돼요."
+        } else {
+            (if (weekly) "월요일부터 일요일 사이" else "그 달 안에") + " 서로 다른 ${form.periodTimes}일에 하면 돼요."
+        },
+    )
+}
+
 @Composable
 private fun SectionTitle(text: String) {
     Text(text, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
@@ -408,7 +449,7 @@ fun SwitchRow(title: String, subtitle: String?, checked: Boolean, onChange: (Boo
 @Composable
 private fun Stepper(prefix: String, value: Int, suffix: String, range: IntRange, onChange: (Int) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(prefix, Modifier.width(56.dp))
+        Text(prefix, Modifier.width(84.dp))
         IconButton(onClick = { onChange((value - 1).coerceIn(range)) }, enabled = value > range.first) {
             Icon(Icons.Filled.Remove, "줄이기")
         }

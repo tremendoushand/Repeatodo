@@ -71,8 +71,8 @@ class RecurrenceTest {
         val rule = RepeatRule(RepeatType.DAILY, startDate = start)
         val today = LocalDate.of(2026, 10, 10)
         val done = setOf(7L, 8L, 9L).map { LocalDate.of(2026, 10, it.toInt()).toEpochDay() }.toSet()
-        assertEquals(3, rule.streak({ it in done }, today))
-        assertEquals(4, rule.streak({ it in done + today.toEpochDay() }, today))
+        assertEquals(3, rule.streak({ it.key in done }, today))
+        assertEquals(4, rule.streak({ it.key in done + today.toEpochDay() }, today))
         assertEquals(0, rule.streak({ false }, today))
     }
 
@@ -80,7 +80,7 @@ class RecurrenceTest {
     fun streak_notDueTodayStartsFromLastOccurrence() {
         val rule = RepeatRule(RepeatType.WEEKLY, weekDays = WeekDays.of(MONDAY), startDate = start)
         val done = setOf(LocalDate.of(2026, 10, 5).toEpochDay(), LocalDate.of(2026, 10, 12).toEpochDay())
-        assertEquals(2, rule.streak({ it in done }, LocalDate.of(2026, 10, 14)))
+        assertEquals(2, rule.streak({ it.key in done }, LocalDate.of(2026, 10, 14)))
     }
 
     @Test
@@ -88,7 +88,7 @@ class RecurrenceTest {
         val rule = RepeatRule(RepeatType.DAILY, startDate = start)
         val today = LocalDate.of(2026, 10, 5)
         val done = setOf(LocalDate.of(2026, 10, 1).toEpochDay(), LocalDate.of(2026, 10, 2).toEpochDay())
-        val rate = rule.rateBetween(start, LocalDate.of(2026, 10, 31), today) { it in done }
+        val rate = rule.rateBetween(start, LocalDate.of(2026, 10, 31), today) { it.key in done }
         // 1..4 are closed (2 done, 2 missed), 5 is today and not done yet, the rest upcoming.
         assertEquals(Rate(2, 5), rate)
     }
@@ -102,8 +102,8 @@ class RecurrenceTest {
         val counts = mapOf("single" to 1, "multi" to 3)
         val targets = mapOf("single" to 1, "multi" to 8)
         val total = listOf("single" to single, "multi" to multi).fold(Rate.ZERO) { acc, (id, rule) ->
-            acc + rule.rateBetween(today, today.plusDays(6), today) { key ->
-                key == today.toEpochDay() && (counts[id] ?: 0) >= targets.getValue(id)
+            acc + rule.rateBetween(today, today.plusDays(6), today) { occ ->
+                occ.key == today.toEpochDay() && (counts[id] ?: 0) >= targets.getValue(id)
             }
         }
         assertEquals(Rate(1, 2), total)
@@ -115,6 +115,21 @@ class RecurrenceTest {
         val today = LocalDate.of(2026, 10, 7)
         assertEquals(Rate(0, 0), rule.rateBetween(LocalDate.of(2026, 10, 5), LocalDate.of(2026, 10, 11), today) { false })
         assertEquals(Rate(1, 1), rule.rateBetween(LocalDate.of(2026, 10, 5), LocalDate.of(2026, 10, 11), today) { true })
+    }
+
+    @Test
+    fun flexible_twoDaysAWeekFiveTimesEachDay() {
+        // Rosary: any 2 days a week, 5 decades on each of those days.
+        val rule = RepeatRule(RepeatType.WEEKLY, weekDays = 0, startDate = start)
+        val goal = Goal(perDay = 5, daysPerPeriod = 2)
+        val week = rule.occurrenceOn(LocalDate.of(2026, 10, 7))!!
+        val counts = mutableMapOf(LocalDate.of(2026, 10, 6).toEpochDay() to 5, LocalDate.of(2026, 10, 7).toEpochDay() to 3)
+        assertEquals(1, rule.doneDays(week, { counts[it] ?: 0 }, goal))
+        assertFalse(rule.isDone(week, { counts[it] ?: 0 }, goal))
+        counts[LocalDate.of(2026, 10, 7).toEpochDay()] = 5
+        assertTrue(rule.isDone(week, { counts[it] ?: 0 }, goal))
+        // Days before the start date don't count.
+        assertEquals(LocalDate.of(2026, 10, 1), rule.daysOf(rule.occurrenceOn(start)!!).first())
     }
 
     @Test

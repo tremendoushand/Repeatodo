@@ -60,7 +60,7 @@ class TaskListViewModel(c: AppContainer) : ViewModel() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TaskListScreen(onAdd: () -> Unit, onOpen: (String) -> Unit, onCategories: () -> Unit) {
+fun TaskListScreen(onAdd: (categoryId: String?) -> Unit, onOpen: (String) -> Unit, onCategories: () -> Unit) {
     val vm = appViewModel { TaskListViewModel(it) }
     val state by vm.state.collectAsStateWithLifecycle()
     var filter by rememberSaveable { mutableStateOf<String?>(null) }
@@ -76,7 +76,7 @@ fun TaskListScreen(onAdd: () -> Unit, onOpen: (String) -> Unit, onCategories: ()
             )
         },
         floatingActionButton = {
-            FloatingActionButton(onClick = onAdd) { Icon(Icons.Filled.Add, contentDescription = "할 일 추가") }
+            FloatingActionButton(onClick = { onAdd(filter) }) { Icon(Icons.Filled.Add, contentDescription = "할 일 추가") }
         },
     ) { padding ->
         val byId = state.categories.associateBy { it.id }

@@ -1,5 +1,9 @@
 package com.tremendoushand.repeatodo.ui.dashboard
 
+import android.content.Context
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -23,6 +27,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -33,14 +38,23 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -51,41 +65,61 @@ import androidx.lifecycle.viewModelScope
 import com.tremendoushand.repeatodo.AppContainer
 import com.tremendoushand.repeatodo.data.CategoryEntity
 import com.tremendoushand.repeatodo.data.TaskEntity
+import com.tremendoushand.repeatodo.domain.Occurrence
 import com.tremendoushand.repeatodo.domain.Rate
+import com.tremendoushand.repeatodo.domain.RepeatType
 import com.tremendoushand.repeatodo.domain.SlotState
+import com.tremendoushand.repeatodo.domain.daysOf
+import com.tremendoushand.repeatodo.domain.doneDays
+import com.tremendoushand.repeatodo.domain.isDone
 import com.tremendoushand.repeatodo.domain.isDueOn
 import com.tremendoushand.repeatodo.domain.occurrenceOn
 import com.tremendoushand.repeatodo.domain.occurrencesBetween
 import com.tremendoushand.repeatodo.domain.rateBetween
 import com.tremendoushand.repeatodo.domain.slotState
 import com.tremendoushand.repeatodo.domain.weekStartOf
+import com.tremendoushand.repeatodo.export.Xlsx
+import com.tremendoushand.repeatodo.export.buildMonthReport
 import com.tremendoushand.repeatodo.ui.components.ColorDot
 import com.tremendoushand.repeatodo.ui.components.appViewModel
 import com.tremendoushand.repeatodo.ui.components.dayLabel
+import com.tremendoushand.repeatodo.ui.components.repeatLabel
 import com.tremendoushand.repeatodo.ui.theme.NoCategoryColor
 import com.tremendoushand.repeatodo.ui.today.currentDateFlow
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.LocalDate
+import java.time.YearMonth
 import kotlin.math.roundToInt
 
 enum class DashMode { WEEK, MONTH }
 
+/** Progress of an "any time" task in the week or month being looked at. */
+data class PeriodProgress(val doneDays: Int, val needDays: Int, val state: SlotState, val monthly: Boolean)
+
 data class DashRow(
     val task: TaskEntity,
     val category: CategoryEntity?,
-    /** One entry per day of the week view; null where the task isn't due. */
+    /**
+     * One entry per day of the view. Dated tasks: the day's state, or null where the task isn't due.
+     * "Any time" tasks: DONE or PENDING (started) on days it was worked on, null otherwise.
+     */
     val cells: List<SlotState?>,
-    /** States of "any time" occurrences in the period, shown instead of [cells]. */
-    val flexible: List<SlotState>,
+    /** Times done on each day of the view (same order as [cells]). */
+    val dayCounts: List<Int>,
     val rate: Rate,
-    /** Times done on each day of the week view (same order as [cells]); only shown for multi-count tasks. */
-    val dayCounts: List<Int> = emptyList(),
-    /** Times done across the period. */
+    /** Set for "any time" tasks. */
+    val period: PeriodProgress? = null,
+    /** Times done across the occurrences in view. */
     val amount: Int = 0,
     /** Times needed across the occurrences counted so far. */
     val amountTarget: Int = 0,
@@ -93,7 +127,8 @@ data class DashRow(
     val multiCount: Boolean get() = task.targetCount > 1
 }
 
-data class DayCell(val date: LocalDate, val done: Int, val due: Int)
+/** A day of the month grid: dated tasks done/due, plus the colors of "any time" tasks worked on that day. */
+data class DayCell(val date: LocalDate, val done: Int, val due: Int, val anyTime: List<Long> = emptyList())
 
 data class DashState(
     val mode: DashMode = DashMode.WEEK,
@@ -108,8 +143,11 @@ data class DashState(
 
 private data class View(val mode: DashMode, val anchor: LocalDate)
 
-class DashboardViewModel(c: AppContainer) : ViewModel() {
+class DashboardViewModel(private val c: AppContainer) : ViewModel() {
     private val view = MutableStateFlow(View(DashMode.WEEK, LocalDate.now()))
+
+    private val _messages = Channel<String>(Channel.BUFFERED)
+    val messages = _messages.receiveAsFlow()
 
     val state = combine(c.tasks.tasks, c.tasks.categories, c.tasks.doneCompletions, currentDateFlow(), view) { tasks, categories, completions, today, v ->
         val (from, to) = when (v.mode) {
@@ -124,34 +162,61 @@ class DashboardViewModel(c: AppContainer) : ViewModel() {
             val rule = task.rule
             if (rule.startDate.isAfter(to)) return@mapNotNull null
             val taskCounts = counts[task.id].orEmpty()
-            val isDone = { key: Long -> (taskCounts[key] ?: 0) >= task.targetCount }
+            val countOn = { day: Long -> taskCounts[day] ?: 0 }
+            val goal = task.goal
+            val isDone = { occ: Occurrence -> rule.isDone(occ, countOn, goal) }
             val occurrences = rule.occurrencesBetween(from, to)
             if (occurrences.isEmpty()) return@mapNotNull null
-            if (task.archived && occurrences.none { isDone(it.key) }) return@mapNotNull null
+            val dayCounts = days.map { countOn(it.toEpochDay()) }
+            if (task.archived && dayCounts.all { it == 0 }) return@mapNotNull null
+            val started = occurrences.count { !it.start.isAfter(today) }
             DashRow(
                 task = task,
                 category = task.categoryId?.let { byId[it] },
-                cells = if (rule.isFlexible) emptyList() else days.map { d ->
-                    rule.occurrenceOn(d)?.let { slotState(it, isDone(it.key), today) }
+                cells = days.mapIndexed { i, d ->
+                    if (rule.isFlexible) {
+                        when {
+                            d.isBefore(rule.startDate) -> null
+                            dayCounts[i] >= goal.perDay -> SlotState.DONE
+                            dayCounts[i] > 0 -> SlotState.PENDING
+                            else -> null
+                        }
+                    } else {
+                        rule.occurrenceOn(d)?.let { slotState(it, isDone(it), today) }
+                    }
                 },
-                flexible = if (rule.isFlexible) occurrences.map { slotState(it, isDone(it.key), today) } else emptyList(),
+                dayCounts = dayCounts,
                 rate = rule.rateBetween(from, to, today, isDone),
-                dayCounts = if (rule.isFlexible) emptyList() else days.map { d -> taskCounts[d.toEpochDay()] ?: 0 },
-                amount = occurrences.sumOf { taskCounts[it.key] ?: 0 },
-                amountTarget = occurrences.count { !it.start.isAfter(today) } * task.targetCount,
+                period = if (!rule.isFlexible) null else {
+                    // The week/month that is open now, or the last one in view.
+                    val focus = occurrences.lastOrNull { !it.start.isAfter(minOf(to, today)) } ?: occurrences.first()
+                    PeriodProgress(
+                        doneDays = rule.doneDays(focus, countOn, goal),
+                        needDays = goal.daysPerPeriod,
+                        state = slotState(focus, isDone(focus), today),
+                        monthly = task.repeatType == RepeatType.MONTHLY,
+                    )
+                },
+                amount = occurrences.sumOf { occ -> rule.daysOf(occ).sumOf { countOn(it.toEpochDay()) } },
+                amountTarget = started * goal.perDay * goal.daysPerPeriod,
             )
         }
 
-        val dayCells = days.map { d ->
+        val dayCells = days.mapIndexed { i, d ->
             var due = 0
             var done = 0
+            val anyTime = mutableListOf<Long>()
             for (row in rows) {
                 val rule = row.task.rule
+                if (rule.isFlexible) {
+                    if (row.dayCounts[i] > 0) anyTime += row.category?.color ?: NoCategoryColor
+                    continue
+                }
                 if (!rule.isDueOn(d)) continue
                 due++
-                if ((counts[row.task.id]?.get(d.toEpochDay()) ?: 0) >= row.task.targetCount) done++
+                if (row.dayCounts[i] >= row.task.targetCount) done++
             }
-            DayCell(d, done, due)
+            DayCell(d, done, due, anyTime)
         }
 
         DashState(
@@ -182,6 +247,25 @@ class DashboardViewModel(c: AppContainer) : ViewModel() {
     fun reset() {
         view.value = view.value.copy(anchor = LocalDate.now())
     }
+
+    /** Writes [month]'s records to [uri] as an Excel calendar. */
+    fun exportMonth(context: Context, uri: Uri, month: YearMonth) = viewModelScope.launch {
+        runCatching {
+            withContext(Dispatchers.IO) {
+                val report = buildMonthReport(
+                    month,
+                    c.tasks.tasks.first(),
+                    c.tasks.categories.first(),
+                    c.tasks.allCompletions(),
+                    ::repeatLabel,
+                )
+                val resolver = context.contentResolver
+                val out = runCatching { resolver.openOutputStream(uri, "wt") }.getOrNull() ?: resolver.openOutputStream(uri)
+                checkNotNull(out) { "파일을 열 수 없어요" }.use { Xlsx.write(report, it) }
+            }
+        }.onSuccess { _messages.send("${month.year}년 ${month.monthValue}월 기록을 엑셀 파일로 저장했어요.") }
+            .onFailure { _messages.send("저장하지 못했어요: ${it.message ?: it.javaClass.simpleName}") }
+    }
 }
 
 private fun Rate.percentText(): String = ratio?.let { "${(it * 100).roundToInt()}%" } ?: "–"
@@ -191,8 +275,33 @@ private fun Rate.percentText(): String = ratio?.let { "${(it * 100).roundToInt()
 fun DashboardScreen() {
     val vm = appViewModel { DashboardViewModel(it) }
     val state by vm.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val snackbar = remember { SnackbarHostState() }
+    LaunchedEffect(Unit) { vm.messages.collect { snackbar.showSnackbar(it) } }
 
-    Scaffold(topBar = { TopAppBar(title = { Text("대시보드", fontWeight = FontWeight.Bold) }) }) { padding ->
+    var pickMonth by remember { mutableStateOf(false) }
+    var exportMonth by rememberSaveable { mutableStateOf<String?>(null) }
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(Xlsx.MIME)) { uri ->
+        val month = exportMonth?.let { YearMonth.parse(it) }
+        if (uri != null && month != null) vm.exportMonth(context.applicationContext, uri, month)
+        exportMonth = null
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("대시보드", fontWeight = FontWeight.Bold) },
+                actions = {
+                    TextButton(onClick = { pickMonth = true }) {
+                        Icon(Icons.Outlined.FileDownload, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("엑셀")
+                    }
+                },
+            )
+        },
+        snackbarHost = { SnackbarHost(snackbar) },
+    ) { padding ->
         LazyColumn(
             Modifier.fillMaxSize().padding(padding),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 32.dp),
@@ -226,9 +335,22 @@ fun DashboardScreen() {
             } else {
                 item { MonthGrid(state) }
                 item { Text("할 일별 달성률", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary) }
-                items(state.rows, key = { it.task.id }) { RateRow(it) }
+                items(state.rows, key = { it.task.id }) { RateRow(it, state.days) }
             }
         }
+    }
+
+    if (pickMonth) {
+        MonthPickerDialog(
+            initial = YearMonth.from(if (state.mode == DashMode.WEEK && state.to.isAfter(state.today)) state.today else state.from),
+            latest = YearMonth.from(state.today),
+            onDismiss = { pickMonth = false },
+            onConfirm = { month ->
+                pickMonth = false
+                exportMonth = month.toString()
+                exportLauncher.launch("repeatodo-$month.xlsx")
+            },
+        )
     }
 }
 
@@ -323,7 +445,24 @@ private fun WeekRow(row: DashRow) {
     Row(Modifier.fillMaxWidth().height(44.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.width(NameWidth).padding(end = 4.dp)) {
             Text(row.task.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
-            if (row.multiCount) {
+            val period = row.period
+            if (period != null) {
+                val text = (if (period.monthly) "이달 " else "") + "${period.doneDays}/${period.needDays}일" + when (period.state) {
+                    SlotState.DONE -> " 완료"
+                    SlotState.MISSED -> " 놓침"
+                    else -> ""
+                }
+                Text(
+                    text,
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                    color = when (period.state) {
+                        SlotState.DONE -> color
+                        SlotState.MISSED -> MaterialTheme.colorScheme.error
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            } else if (row.multiCount) {
                 Text(
                     "${row.amount}/${row.amountTarget}회",
                     style = MaterialTheme.typography.labelSmall,
@@ -331,18 +470,9 @@ private fun WeekRow(row: DashRow) {
                 )
             }
         }
-        if (row.flexible.isNotEmpty()) {
-            val label = when {
-                row.flexible.all { it == SlotState.DONE } -> "완료"
-                row.flexible.any { it == SlotState.MISSED } -> "놓침"
-                else -> "진행 중 (기간 내 아무 때나)"
-            }
-            Text(label, Modifier.weight(1f), textAlign = TextAlign.Center, style = MaterialTheme.typography.bodySmall, color = color)
-        } else {
-            row.cells.forEachIndexed { i, state ->
-                val count = if (row.multiCount) row.dayCounts.getOrNull(i) ?: 0 else 0
-                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) { SlotMark(state, color, count) }
-            }
+        row.cells.forEachIndexed { i, state ->
+            val count = if (row.multiCount) row.dayCounts.getOrNull(i) ?: 0 else 0
+            Box(Modifier.weight(1f), contentAlignment = Alignment.Center) { SlotMark(state, color, count) }
         }
     }
 }
@@ -402,6 +532,17 @@ private fun MonthGrid(state: DashState) {
                                         style = MaterialTheme.typography.labelMedium,
                                         color = if (closed && ratio > 0.5f) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
                                     )
+                                    if (cell.anyTime.isNotEmpty()) {
+                                        // "Any time" tasks worked on this day.
+                                        Row(
+                                            Modifier.align(Alignment.BottomCenter).padding(bottom = 3.dp),
+                                            horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                        ) {
+                                            cell.anyTime.take(4).forEach { c ->
+                                                Box(Modifier.size(5.dp).background(Color(c), CircleShape).border(0.5.dp, Color.White, CircleShape))
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -410,7 +551,7 @@ private fun MonthGrid(state: DashState) {
             }
             Spacer(Modifier.height(8.dp))
             Text(
-                "색이 진할수록 그날 할 일을 많이 끝낸 날이에요. ‘아무 때나’ 할 일은 아래 목록에서 확인하세요.",
+                "색이 진할수록 그날 할 일을 많이 끝낸 날이에요. 작은 점은 ‘아무 때나’ 할 일을 한 날이에요.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -419,8 +560,9 @@ private fun MonthGrid(state: DashState) {
 }
 
 @Composable
-private fun RateRow(row: DashRow) {
+private fun RateRow(row: DashRow, days: List<DayCell>) {
     val color = Color(row.category?.color ?: NoCategoryColor)
+    val detail = MaterialTheme.typography.labelSmall
     Column(Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             ColorDot(row.category?.color ?: NoCategoryColor)
@@ -429,12 +571,23 @@ private fun RateRow(row: DashRow) {
             Text("${row.rate.done}/${row.rate.counted}  ${row.rate.percentText()}", style = MaterialTheme.typography.bodySmall)
         }
         if (row.multiCount) {
+            val each = if (row.period != null) "하는 날마다" else "하루"
             Text(
-                "누적 ${row.amount}회 · 목표 ${row.amountTarget}회 (한 번에 ${row.task.targetCount}회)",
-                style = MaterialTheme.typography.labelSmall,
+                "누적 ${row.amount}회 · 목표 ${row.amountTarget}회 ($each ${row.task.targetCount}회)",
+                style = detail,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = 20.dp),
             )
+        }
+        if (row.period != null) {
+            // When an "any time" task was done this month.
+            val worked = days.indices.filter { row.dayCounts[it] > 0 }
+            val text = when {
+                worked.isEmpty() -> "이달에 한 날이 아직 없어요"
+                row.multiCount -> "한 날: " + worked.joinToString(", ") { "${days[it].date.dayOfMonth}일 ${row.dayCounts[it]}회" }
+                else -> "한 날: " + worked.joinToString(", ") { "${days[it].date.dayOfMonth}" } + "일"
+            }
+            Text(text, style = detail, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 20.dp))
         }
         Spacer(Modifier.height(4.dp))
         LinearProgressIndicator(

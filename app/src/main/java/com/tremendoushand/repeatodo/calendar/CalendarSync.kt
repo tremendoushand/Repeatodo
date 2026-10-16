@@ -29,6 +29,9 @@ import java.time.ZoneOffset
 
 data class DeviceCalendar(val id: Long, val name: String, val account: String, val color: Int)
 
+/** Written into every event this app creates, so leftovers can be found again. */
+private const val MARKER = "Repeatodo에서 만든 일정"
+
 /**
  * Mirrors tasks marked "캘린더에 표시" as repeating events in a calendar on the device
  * (for example the user's Google Calendar). Events are written by this app only; edits made
@@ -106,17 +109,30 @@ class CalendarSync(
         }
     }
 
-    /** Removes every event this app created. */
-    suspend fun removeAll() = mutex.withLock {
+    /**
+     * Removes every event this app created: the ones it knows about, and any left behind by an
+     * earlier install (found by the note it writes in each event). Returns how many were removed.
+     */
+    suspend fun removeAll(): Int = mutex.withLock {
         withContext(Dispatchers.IO) {
-            if (hasPermission()) deviceDb.calendarLinks().all().forEach { deleteEvent(it.eventId) }
+            val ids = mutableSetOf<Long>()
+            if (hasPermission()) {
+                deviceDb.calendarLinks().all().mapTo(ids) { it.eventId }
+                runCatching {
+                    resolver.query(
+                        Events.CONTENT_URI, arrayOf(Events._ID),
+                        "${Events.DESCRIPTION} LIKE ? AND ${Events.DELETED} = 0", arrayOf("%$MARKER"), null,
+                    )?.use { c -> while (c.moveToNext()) ids += c.getLong(0) }
+                }
+            }
+            val removed = ids.count { deleteEvent(it) }
             deviceDb.calendarLinks().clear()
+            removed
         }
     }
 
-    private fun deleteEvent(eventId: Long) {
-        runCatching { resolver.delete(ContentUris.withAppendedId(Events.CONTENT_URI, eventId), null, null) }
-    }
+    private fun deleteEvent(eventId: Long): Boolean =
+        runCatching { resolver.delete(ContentUris.withAppendedId(Events.CONTENT_URI, eventId), null, null) > 0 }.getOrDefault(false)
 
     private fun eventValues(task: TaskEntity, calendarId: Long): ContentValues? {
         val rule = task.rule
@@ -143,14 +159,14 @@ class CalendarSync(
         }
         val prefix = when {
             !flexible -> ""
-            task.repeatType == RepeatType.WEEKLY -> "[이번 주] "
-            else -> "[이번 달] "
+            task.repeatType == RepeatType.WEEKLY -> if (task.periodTimes > 1) "[이번 주 ${task.periodTimes}일] " else "[이번 주] "
+            else -> if (task.periodTimes > 1) "[이번 달 ${task.periodTimes}일] " else "[이번 달] "
         }
         val minutes = task.reminderMinutes
         return ContentValues().apply {
             put(Events.CALENDAR_ID, calendarId)
             put(Events.TITLE, prefix + task.title)
-            put(Events.DESCRIPTION, listOf(task.note, "Repeatodo에서 만든 일정").filter { it.isNotBlank() }.joinToString("\n"))
+            put(Events.DESCRIPTION, listOf(task.note, MARKER).filter { it.isNotBlank() }.joinToString("\n"))
             put(Events.RRULE, rrule)
             put(Events.HAS_ALARM, 0)
             if (minutes == null || flexible) {

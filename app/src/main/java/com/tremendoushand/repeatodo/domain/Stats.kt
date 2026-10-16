@@ -33,12 +33,12 @@ fun RepeatRule.rateBetween(
     from: LocalDate,
     to: LocalDate,
     today: LocalDate,
-    isDone: (Long) -> Boolean,
+    isDone: (Occurrence) -> Boolean,
 ): Rate {
     var done = 0
     var counted = 0
     for (occ in occurrencesBetween(from, to)) {
-        when (slotState(occ, isDone(occ.key), today)) {
+        when (slotState(occ, isDone(occ), today)) {
             SlotState.DONE -> { done++; counted++ }
             SlotState.MISSED -> counted++
             SlotState.PENDING -> if (!occ.flexible) counted++

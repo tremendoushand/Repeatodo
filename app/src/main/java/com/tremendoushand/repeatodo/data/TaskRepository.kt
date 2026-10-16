@@ -25,6 +25,10 @@ class TaskRepository(private val db: AppDatabase) {
     suspend fun allCompletions(): List<CompletionEntity> = db.completions().all()
     suspend fun completion(taskId: String, key: Long): CompletionEntity? = db.completions().get(completionId(taskId, key))
 
+    /** Count recorded on each day between [from] and [to] (epoch days, inclusive). */
+    suspend fun counts(taskId: String, from: Long, to: Long): Map<Long, Int> =
+        db.completions().between(taskId, from, to).associate { it.occurrenceKey to it.count }
+
     suspend fun saveTask(task: TaskEntity): TaskEntity {
         val t = now()
         val saved = task.copy(

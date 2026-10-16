@@ -63,20 +63,21 @@ fun formatTime(minutes: Int): String {
 }
 
 fun repeatLabel(task: TaskEntity): String {
+    val days = task.goal.daysPerPeriod
     val base = when (task.repeatType) {
         RepeatType.DAILY -> "매일"
         RepeatType.WEEKLY ->
-            if (task.weekDays and WeekDays.ALL == 0) "매주 아무 때나 1번"
+            if (task.weekDays and WeekDays.ALL == 0) "주중 아무 때나" + if (days > 1) " ${days}일" else ""
             else if (task.weekDays and WeekDays.ALL == WeekDays.ALL) "매주 매일"
             else "매주 " + WeekDays.toList(task.weekDays).joinToString("·") { dayLabel(it) }
         RepeatType.MONTHLY -> when {
-            task.monthDay == 0 -> "매월 아무 때나 1번"
+            task.monthDay == 0 -> "월중 아무 때나" + if (days > 1) " ${days}일" else ""
             task.monthDay >= LAST_DAY -> "매월 말일"
             else -> "매월 ${task.monthDay}일"
         }
     }
     val parts = mutableListOf(base)
-    if (task.targetCount > 1) parts += "${task.targetCount}회씩"
+    if (task.targetCount > 1) parts += if (task.rule.isFlexible) "하는 날마다 ${task.targetCount}회" else "${task.targetCount}회씩"
     task.reminderMinutes?.let { parts += formatTime(it) }
     task.totalCount?.let { parts += "총 ${it}번" }
     return parts.joinToString(" · ")
