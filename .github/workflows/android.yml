@@ -30,6 +30,13 @@ jobs:
           set -o pipefail
           ./gradlew assembleDebug --stacktrace 2>&1 | tee debug.log
 
+      # The debug key is fixed, so this fingerprint should be the same on every run.
+      - name: Show debug signing certificate
+        run: |
+          BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          CERT=$("$BUILD_TOOLS/apksigner" verify --print-certs app/build/outputs/apk/debug/*.apk | grep -m1 "SHA-256")
+          echo "::notice::Debug APK $CERT"
+
       # Optional: with the signing secrets set (see docs/PLAY_STORE_GUIDE.md), release builds are signed
       # with your own key, so Google Drive sign-in works and the AAB can go straight to Play Console.
       - name: Prepare release signing

@@ -12,3 +12,5 @@ captures/
 keystore.properties
 *.jks
 *.keystore
+# Shared debug-only signing key, see app/build.gradle.kts
+!app/debug.keystore

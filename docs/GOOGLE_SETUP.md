@@ -34,7 +34,7 @@ SHA-1 확인 방법:
 
 | 어떤 앱을 쓸 때 | SHA-1 얻는 방법 |
 |---|---|
-| Android Studio에서 바로 설치한 앱(디버그) | 터미널에서 `keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android` (Windows는 `%USERPROFILE%\.android\debug.keystore`) |
+| GitHub Actions나 Android Studio로 만든 디버그 앱 | 저장소의 `app/debug.keystore`로 서명돼요. 터미널에서 `keytool -list -v -keystore app/debug.keystore -alias androiddebugkey -storepass android` |
 | 내 서명 키로 만든 앱(릴리스) | `keytool -list -v -keystore repeatodo-release.jks -alias repeatodo` |
 | 플레이스토어에서 받은 앱 | Play Console → 앱 → **테스트 및 출시 → 앱 무결성 → 앱 서명** 의 *앱 서명 키 인증서* SHA-1 |
 

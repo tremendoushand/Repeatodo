@@ -28,6 +28,14 @@ android {
     }
 
     signingConfigs {
+        // A fixed debug key (committed on purpose, debug only) so each CI build installs over the last one
+        // without losing data. Release builds use your own key below.
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
         create("release") {
             val storePath = signingValue("storeFile", "REPEATODO_KEYSTORE")
             if (storePath != null) {
