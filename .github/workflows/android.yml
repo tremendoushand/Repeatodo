@@ -26,14 +26,36 @@ jobs:
       - name: Build debug APK
         run: ./gradlew assembleDebug --stacktrace
 
-      - name: Build release (checks shrinking and lint)
-        run: ./gradlew assembleRelease --stacktrace
+      # Optional: with the signing secrets set (see docs/PLAY_STORE_GUIDE.md), release builds are signed
+      # with your own key, so Google Drive sign-in works and the AAB can go straight to Play Console.
+      - name: Prepare release signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.REPEATODO_KEYSTORE_BASE64 }}
+        if: env.KEYSTORE_BASE64 != ''
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          echo "REPEATODO_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+
+      - name: Build release APK and AAB (checks shrinking and lint)
+        env:
+          REPEATODO_KEYSTORE_PASSWORD: ${{ secrets.REPEATODO_KEYSTORE_PASSWORD }}
+          REPEATODO_KEY_ALIAS: ${{ secrets.REPEATODO_KEY_ALIAS }}
+          REPEATODO_KEY_PASSWORD: ${{ secrets.REPEATODO_KEY_PASSWORD }}
+        run: ./gradlew assembleRelease bundleRelease --stacktrace
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
           name: repeatodo-debug-apk
           path: app/build/outputs/apk/debug/*.apk
+
+      - name: Upload release builds
+        uses: actions/upload-artifact@v4
+        with:
+          name: repeatodo-release
+          path: |
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/bundle/release/*.aab
 
       - name: Upload test reports
         if: failure()
