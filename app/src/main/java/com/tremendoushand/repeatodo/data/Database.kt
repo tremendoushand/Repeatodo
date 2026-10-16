@@ -95,7 +95,7 @@ interface CalendarLinkDao {
 }
 
 @Database(
-    entities = [CategoryEntity::class, TaskEntity::class, CompletionEntity::class, CalendarLinkEntity::class],
+    entities = [CategoryEntity::class, TaskEntity::class, CompletionEntity::class],
     version = 1,
     exportSchema = true,
 )
@@ -103,10 +103,24 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun categories(): CategoryDao
     abstract fun tasks(): TaskDao
     abstract fun completions(): CompletionDao
-    abstract fun calendarLinks(): CalendarLinkDao
 
     companion object {
         fun create(context: Context): AppDatabase =
             Room.databaseBuilder(context, AppDatabase::class.java, "repeatodo.db").build()
+    }
+}
+
+/**
+ * Data that only makes sense on this device (calendar event ids). Kept in its own file so it is
+ * left out of Android backup and device transfer.
+ */
+@Database(entities = [CalendarLinkEntity::class], version = 1, exportSchema = true)
+abstract class DeviceDatabase : RoomDatabase() {
+    abstract fun calendarLinks(): CalendarLinkDao
+
+    companion object {
+        const val NAME = "device.db"
+        fun create(context: Context): DeviceDatabase =
+            Room.databaseBuilder(context, DeviceDatabase::class.java, NAME).build()
     }
 }

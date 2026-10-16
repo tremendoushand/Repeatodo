@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <full-backup-content>
     <include domain="database" path="." />
+    <exclude domain="database" path="device.db" />
+    <exclude domain="database" path="device.db-shm" />
+    <exclude domain="database" path="device.db-wal" />
     <include domain="file" path="datastore/" />
 </full-backup-content>

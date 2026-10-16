@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import com.tremendoushand.repeatodo.calendar.CalendarSync
 import com.tremendoushand.repeatodo.data.AppDatabase
+import com.tremendoushand.repeatodo.data.DeviceDatabase
 import com.tremendoushand.repeatodo.data.SettingsRepository
 import com.tremendoushand.repeatodo.data.TaskRepository
 import com.tremendoushand.repeatodo.notify.Notifications
@@ -18,10 +19,11 @@ import kotlinx.coroutines.launch
 class AppContainer(context: Context) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val db = AppDatabase.create(context)
+    val deviceDb = DeviceDatabase.create(context)
     val settings = SettingsRepository(context)
     val tasks = TaskRepository(db)
     val reminders = ReminderScheduler(context, tasks, settings)
-    val calendar = CalendarSync(context, db, settings)
+    val calendar = CalendarSync(context, db, deviceDb, settings)
     val sync = SyncManager(context, tasks, settings)
 
     init {

@@ -10,6 +10,7 @@ import android.provider.CalendarContract.Events
 import androidx.core.content.ContextCompat
 import com.tremendoushand.repeatodo.data.AppDatabase
 import com.tremendoushand.repeatodo.data.CalendarLinkEntity
+import com.tremendoushand.repeatodo.data.DeviceDatabase
 import com.tremendoushand.repeatodo.data.SettingsRepository
 import com.tremendoushand.repeatodo.data.TaskEntity
 import com.tremendoushand.repeatodo.domain.LAST_DAY
@@ -36,6 +37,7 @@ data class DeviceCalendar(val id: Long, val name: String, val account: String, v
 class CalendarSync(
     private val context: Context,
     private val db: AppDatabase,
+    private val deviceDb: DeviceDatabase,
     private val settings: SettingsRepository,
 ) {
     private val resolver get() = context.contentResolver
@@ -69,7 +71,7 @@ class CalendarSync(
             if (!hasPermission()) return@withContext
             val s = settings.current()
             val calendarId = s.calendarId
-            val links = db.calendarLinks().all().associateBy { it.taskId }
+            val links = deviceDb.calendarLinks().all().associateBy { it.taskId }
             val wanted = if (s.calendarEnabled && calendarId != null) {
                 db.tasks().active().filter { it.showInCalendar }
             } else {
@@ -80,7 +82,7 @@ class CalendarSync(
             for (link in links.values) {
                 if (link.taskId !in wantedIds || link.calendarId != calendarId) {
                     deleteEvent(link.eventId)
-                    db.calendarLinks().delete(link.taskId)
+                    deviceDb.calendarLinks().delete(link.taskId)
                 }
             }
             if (calendarId == null) return@withContext
@@ -92,7 +94,7 @@ class CalendarSync(
                 }.getOrDefault(0) > 0
                 if (!updated) {
                     val uri = runCatching { resolver.insert(Events.CONTENT_URI, values) }.getOrNull() ?: continue
-                    db.calendarLinks().upsert(CalendarLinkEntity(task.id, ContentUris.parseId(uri), calendarId))
+                    deviceDb.calendarLinks().upsert(CalendarLinkEntity(task.id, ContentUris.parseId(uri), calendarId))
                 }
             }
         }
@@ -101,8 +103,8 @@ class CalendarSync(
     /** Removes every event this app created. */
     suspend fun removeAll() = mutex.withLock {
         withContext(Dispatchers.IO) {
-            if (hasPermission()) db.calendarLinks().all().forEach { deleteEvent(it.eventId) }
-            db.calendarLinks().clear()
+            if (hasPermission()) deviceDb.calendarLinks().all().forEach { deleteEvent(it.eventId) }
+            deviceDb.calendarLinks().clear()
         }
     }
 
