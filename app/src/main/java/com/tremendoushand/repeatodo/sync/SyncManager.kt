@@ -43,8 +43,14 @@ class SyncManager(
             withContext(Dispatchers.IO) {
                 val drive = DriveClient(token, http)
                 val fileId = drive.findFileId()
+                // If the Drive copy exists but can't be read, stop rather than overwrite it with local data.
                 val remote = fileId?.let { id ->
-                    runCatching { SnapshotJson.decodeFromString(Snapshot.serializer(), drive.download(id)) }.getOrNull()
+                    val text = drive.download(id)
+                    try {
+                        SnapshotJson.decodeFromString(Snapshot.serializer(), text)
+                    } catch (e: Exception) {
+                        throw IOException("드라이브의 동기화 파일을 읽을 수 없어 동기화를 멈췄어요. 앱을 최신 버전으로 업데이트해 주세요.", e)
+                    }
                 }
                 val merged = tasks.mergeIn(remote)
                 val content = SnapshotJson.encodeToString(Snapshot.serializer(), merged)

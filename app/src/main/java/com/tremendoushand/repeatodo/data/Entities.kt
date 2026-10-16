@@ -7,7 +7,9 @@ import com.tremendoushand.repeatodo.domain.CategoryDto
 import com.tremendoushand.repeatodo.domain.CompletionDto
 import com.tremendoushand.repeatodo.domain.RepeatRule
 import com.tremendoushand.repeatodo.domain.RepeatType
+import com.tremendoushand.repeatodo.domain.LAST_DAY
 import com.tremendoushand.repeatodo.domain.TaskDto
+import com.tremendoushand.repeatodo.domain.WeekDays
 import java.time.LocalDate
 
 @Entity(tableName = "categories")
@@ -64,22 +66,29 @@ data class CalendarLinkEntity(
     val calendarId: Long,
 )
 
+// Year 1900..2200, far inside what java.time accepts.
+private val MIN_EPOCH_DAY = LocalDate.of(1900, 1, 1).toEpochDay()
+private val MAX_EPOCH_DAY = LocalDate.of(2200, 1, 1).toEpochDay()
+
 fun CategoryEntity.toDto() = CategoryDto(id, name, color, sortOrder, updatedAt, deleted)
-fun CategoryDto.toEntity() = CategoryEntity(id, name, color, sortOrder, updatedAt, deleted)
+fun CategoryDto.toEntity() = CategoryEntity(id, name.take(100), color, sortOrder, updatedAt, deleted)
 
 fun TaskEntity.toDto() = TaskDto(
     id, title, note, categoryId, repeatType.name, weekDays, monthDay, reminderMinutes,
     targetCount, totalCount, startDate, showInCalendar, archived, sortOrder, createdAt, updatedAt, deleted,
 )
 
+/** Values from a backup or Drive file are clamped to sane ranges so a damaged file can't crash the app. */
 fun TaskDto.toEntity() = TaskEntity(
-    id = id, title = title, note = note, categoryId = categoryId,
+    id = id, title = title.take(500), note = note.take(5000), categoryId = categoryId,
     repeatType = runCatching { RepeatType.valueOf(repeatType) }.getOrDefault(RepeatType.DAILY),
-    weekDays = weekDays, monthDay = monthDay, reminderMinutes = reminderMinutes,
-    targetCount = targetCount, totalCount = totalCount, startDate = startDate,
+    weekDays = weekDays and WeekDays.ALL, monthDay = monthDay.coerceIn(0, LAST_DAY),
+    reminderMinutes = reminderMinutes?.coerceIn(0, 24 * 60 - 1),
+    targetCount = targetCount.coerceIn(1, 99), totalCount = totalCount?.coerceIn(1, 9999),
+    startDate = startDate.coerceIn(MIN_EPOCH_DAY, MAX_EPOCH_DAY),
     showInCalendar = showInCalendar, archived = archived, sortOrder = sortOrder,
     createdAt = createdAt, updatedAt = updatedAt, deleted = deleted,
 )
 
 fun CompletionEntity.toDto() = CompletionDto(id, taskId, occurrenceKey, count, updatedAt)
-fun CompletionDto.toEntity() = CompletionEntity(id, taskId, occurrenceKey, count, updatedAt)
+fun CompletionDto.toEntity() = CompletionEntity(id, taskId, occurrenceKey, count.coerceIn(0, 99), updatedAt)

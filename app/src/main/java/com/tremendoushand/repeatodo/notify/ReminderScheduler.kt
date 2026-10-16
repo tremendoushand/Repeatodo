@@ -64,9 +64,14 @@ class ReminderScheduler(
 
     private fun set(uri: String, at: Long) {
         val pi = pendingIntent(uri)
-        if (canScheduleExact()) {
-            alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi)
-        } else {
+        try {
+            if (canScheduleExact()) {
+                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi)
+            } else {
+                alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi)
+            }
+        } catch (e: SecurityException) {
+            // Exact alarms were revoked between the check and the call; fall back to inexact.
             alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi)
         }
     }

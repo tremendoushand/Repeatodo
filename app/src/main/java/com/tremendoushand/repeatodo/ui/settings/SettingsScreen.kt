@@ -275,7 +275,7 @@ fun SettingsScreen() {
                     if (Build.VERSION.SDK_INT >= 33 && !s.askedNotificationPermission) {
                         notificationLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
                     } else {
-                        context.startActivity(
+                        context.startSafely(
                             Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName),
                         )
                     }
@@ -283,7 +283,7 @@ fun SettingsScreen() {
             }
             if (!canExact && Build.VERSION.SDK_INT >= 31) {
                 Warning("정확한 시간 알림이 허용되지 않아 알림이 몇 분 늦을 수 있어요.") {
-                    context.startActivity(
+                    context.startSafely(
                         Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, "package:${context.packageName}".toUri()),
                     )
                 }
@@ -396,7 +396,7 @@ fun SettingsScreen() {
             Text(
                 "사용자 가이드 보기",
                 color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.clickable { uri.openUri(GUIDE_URL) }.padding(vertical = 4.dp),
+                modifier = Modifier.clickable { runCatching { uri.openUri(GUIDE_URL) } }.padding(vertical = 4.dp),
             )
             Text("Repeatodo ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(32.dp))
@@ -409,6 +409,15 @@ fun SettingsScreen() {
             onDismiss = { addingTime = false },
             onConfirm = { vm.addDigestTime(it); addingTime = false },
         )
+    }
+}
+
+/** Opens a system screen, ignoring phones that don't have it. */
+private fun Context.startSafely(intent: Intent) {
+    try {
+        startActivity(intent)
+    } catch (e: android.content.ActivityNotFoundException) {
+        startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, "package:$packageName".toUri()))
     }
 }
 
