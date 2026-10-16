@@ -11,9 +11,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 17
@@ -21,10 +21,14 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
 
       - name: Unit tests
-        run: ./gradlew testDebugUnitTest --stacktrace
+        run: |
+          set -o pipefail
+          ./gradlew testDebugUnitTest --stacktrace 2>&1 | tee test.log
 
       - name: Build debug APK
-        run: ./gradlew assembleDebug --stacktrace
+        run: |
+          set -o pipefail
+          ./gradlew assembleDebug --stacktrace 2>&1 | tee debug.log
 
       # Optional: with the signing secrets set (see docs/PLAY_STORE_GUIDE.md), release builds are signed
       # with your own key, so Google Drive sign-in works and the AAB can go straight to Play Console.
@@ -41,7 +45,9 @@ jobs:
           REPEATODO_KEYSTORE_PASSWORD: ${{ secrets.REPEATODO_KEYSTORE_PASSWORD }}
           REPEATODO_KEY_ALIAS: ${{ secrets.REPEATODO_KEY_ALIAS }}
           REPEATODO_KEY_PASSWORD: ${{ secrets.REPEATODO_KEY_PASSWORD }}
-        run: ./gradlew assembleRelease bundleRelease --stacktrace
+        run: |
+          set -o pipefail
+          ./gradlew assembleRelease bundleRelease --stacktrace 2>&1 | tee release.log
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
@@ -56,6 +62,14 @@ jobs:
           path: |
             app/build/outputs/apk/release/*.apk
             app/build/outputs/bundle/release/*.aab
+
+      # Surface the key error lines as annotations so they show on the run summary page.
+      - name: Summarize errors
+        if: failure()
+        run: |
+          cat test.log debug.log release.log 2>/dev/null \
+            | grep -E "^e: |error:|Error:|What went wrong|^> |Missing class|lint|\.kt:[0-9]+|\.xml:[0-9]+" \
+            | grep -v "^\s*at " | head -40 | while IFS= read -r line; do echo "::error::$line"; done
 
       - name: Upload test reports
         if: failure()
