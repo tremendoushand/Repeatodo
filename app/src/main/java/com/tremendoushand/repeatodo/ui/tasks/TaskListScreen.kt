@@ -1,29 +1,37 @@
 package com.tremendoushand.repeatodo.ui.tasks
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.outlined.Category
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -34,8 +42,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -121,37 +132,92 @@ fun TaskListScreen(onAdd: (categoryId: String?) -> Unit, onOpen: (String) -> Uni
             }
             groups.forEach { (category, tasks) ->
                 item(key = "cat-${category?.id}") {
-                    Row(Modifier.padding(start = 16.dp, top = 16.dp, bottom = 4.dp)) {
-                        ColorDot(category?.color ?: NoCategoryColor, Modifier.padding(top = 4.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text(category?.name ?: "카테고리 없음", style = MaterialTheme.typography.titleSmall)
-                    }
+                    CategoryGroup(
+                        name = category?.name ?: "카테고리 없음",
+                        color = Color(category?.color ?: NoCategoryColor),
+                        tasks = tasks,
+                        weekStart = state.weekStart,
+                        onOpen = onOpen,
+                    )
                 }
-                items(tasks, key = { it.id }) { task -> TaskItem(task, state.weekStart) { onOpen(task.id) } }
             }
             if (finished.isNotEmpty()) {
                 item {
-                    HorizontalDivider(Modifier.padding(top = 16.dp))
-                    TextButton(onClick = { showFinished = !showFinished }, modifier = Modifier.padding(horizontal = 8.dp)) {
+                    TextButton(onClick = { showFinished = !showFinished }, modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp)) {
                         Text(if (showFinished) "끝난 할 일 숨기기" else "끝난 할 일 ${finished.size}개 보기")
                     }
                 }
-                if (showFinished) items(finished, key = { "f-" + it.id }) { task -> TaskItem(task, state.weekStart) { onOpen(task.id) } }
+                if (showFinished) {
+                    item(key = "finished") {
+                        CategoryGroup(
+                            name = "끝난 할 일",
+                            color = MaterialTheme.colorScheme.outline,
+                            tasks = finished,
+                            weekStart = state.weekStart,
+                            onOpen = onOpen,
+                            colorOf = { task -> task.categoryId?.let(byId::get)?.color?.let { Color(it) } },
+                        )
+                    }
+                }
             }
         }
     }
 }
 
+/**
+ * One category as a card: a tinted header with the category's name, and its tasks indented
+ * underneath with a color rail, so the two levels read apart.
+ */
 @Composable
-private fun TaskItem(task: TaskEntity, weekStart: DayOfWeek, onClick: () -> Unit) {
-    ListItem(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
-        headlineContent = { Text(task.title) },
-        supportingContent = {
-            Column {
-                Text(repeatLabel(task, weekStart))
-                if (task.note.isNotBlank()) Text(task.note, maxLines = 1, color = MaterialTheme.colorScheme.onSurfaceVariant)
+private fun CategoryGroup(
+    name: String,
+    color: Color,
+    tasks: List<TaskEntity>,
+    weekStart: DayOfWeek,
+    onOpen: (String) -> Unit,
+    colorOf: (TaskEntity) -> Color? = { null },
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().background(color.copy(alpha = 0.16f)).padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.size(14.dp).background(color, CircleShape))
+            Spacer(Modifier.width(10.dp))
+            Text(name, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text("${tasks.size}개", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        tasks.forEachIndexed { i, task ->
+            if (i > 0) HorizontalDivider(Modifier.padding(start = 36.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            TaskItem(task, colorOf(task) ?: color, weekStart) { onOpen(task.id) }
+        }
+    }
+}
+
+@Composable
+private fun TaskItem(task: TaskEntity, color: Color, weekStart: DayOfWeek, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(start = 22.dp, end = 12.dp, top = 10.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.width(3.dp).height(36.dp).background(color.copy(alpha = 0.7f), RoundedCornerShape(2.dp)))
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(task.title, style = MaterialTheme.typography.bodyLarge)
+            Text(repeatLabel(task, weekStart), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (task.note.isNotBlank()) {
+                Text(
+                    task.note,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
-        },
-    )
+        }
+        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
 }

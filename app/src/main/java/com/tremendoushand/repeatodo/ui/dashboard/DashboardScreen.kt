@@ -9,6 +9,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -60,9 +61,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -316,40 +320,43 @@ fun DashboardScreen() {
         },
         snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
-        LazyColumn(
-            Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            item {
-                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                    DashMode.entries.forEachIndexed { i, mode ->
-                        SegmentedButton(
-                            selected = state.mode == mode,
-                            onClick = { vm.setMode(mode) },
-                            shape = SegmentedButtonDefaults.itemShape(i, DashMode.entries.size),
-                        ) { Text(if (mode == DashMode.WEEK) "주간" else "월간") }
+        BoxWithConstraints(Modifier.fillMaxSize().padding(padding)) {
+            val nameWidth = nameColumnWidth(state.rows, available = maxWidth - 32.dp)
+            LazyColumn(
+                Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 32.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                item {
+                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                        DashMode.entries.forEachIndexed { i, mode ->
+                            SegmentedButton(
+                                selected = state.mode == mode,
+                                onClick = { vm.setMode(mode) },
+                                shape = SegmentedButtonDefaults.itemShape(i, DashMode.entries.size),
+                            ) { Text(if (mode == DashMode.WEEK) "주간" else "월간") }
+                        }
                     }
                 }
-            }
-            item { PeriodNavigator(state, onMove = vm::move, onReset = vm::reset) }
-            item { SummaryCard(state) }
-            if (state.rows.isEmpty()) {
-                item {
-                    Text(
-                        "이 기간에 해당하는 할 일이 없어요.",
-                        Modifier.fillMaxWidth().padding(24.dp),
-                        textAlign = TextAlign.Center,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                item { PeriodNavigator(state, onMove = vm::move, onReset = vm::reset) }
+                item { SummaryCard(state) }
+                if (state.rows.isEmpty()) {
+                    item {
+                        Text(
+                            "이 기간에 해당하는 할 일이 없어요.",
+                            Modifier.fillMaxWidth().padding(24.dp),
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                } else if (state.mode == DashMode.WEEK) {
+                    item { WeekHeader(state, nameWidth) }
+                    items(state.rows, key = { it.task.id }) { WeekRow(it, nameWidth) }
+                } else {
+                    item { MonthGrid(state) }
+                    item { Text("할 일별 달성률", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary) }
+                    items(state.rows, key = { it.task.id }) { RateRow(it, state.days) }
                 }
-            } else if (state.mode == DashMode.WEEK) {
-                item { WeekHeader(state) }
-                items(state.rows, key = { it.task.id }) { WeekRow(it) }
-            } else {
-                item { MonthGrid(state) }
-                item { Text("할 일별 달성률", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary) }
-                items(state.rows, key = { it.task.id }) { RateRow(it, state.days) }
             }
         }
     }
@@ -428,12 +435,32 @@ private fun SummaryCard(state: DashState) {
     }
 }
 
-private val NameWidth = 104.dp
+private val NameMinWidth = 104.dp
+private val DayMinWidth = 44.dp
+
+/**
+ * Width of the task-name column in the weekly table: wide enough for the longest name when the
+ * screen has room (tablets, unfolded foldables), but never squeezing the 7 day columns below
+ * [DayMinWidth]. On phones this stays at [NameMinWidth] and long names show in a tooltip.
+ */
+@Composable
+private fun nameColumnWidth(rows: List<DashRow>, available: Dp): Dp {
+    val measurer = rememberTextMeasurer()
+    val style = MaterialTheme.typography.bodyMedium
+    val density = LocalDensity.current
+    val titles = rows.map { it.task.title }
+    val longest = remember(titles, style, density) {
+        titles.maxOfOrNull { measurer.measure(it, style, maxLines = 1, softWrap = false).size.width } ?: 0
+    }
+    val wanted = with(density) { longest.toDp() } + 12.dp
+    val roomy = available - DayMinWidth * 7
+    return wanted.coerceAtMost(roomy).coerceAtLeast(NameMinWidth)
+}
 
 @Composable
-private fun WeekHeader(state: DashState) {
+private fun WeekHeader(state: DashState, nameWidth: Dp) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Spacer(Modifier.width(NameWidth))
+        Spacer(Modifier.width(nameWidth))
         state.days.forEach { cell ->
             val isToday = cell.date == state.today
             Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -455,10 +482,10 @@ private fun WeekHeader(state: DashState) {
 }
 
 @Composable
-private fun WeekRow(row: DashRow) {
+private fun WeekRow(row: DashRow, nameWidth: Dp) {
     val color = Color(row.category?.color ?: NoCategoryColor)
     Row(Modifier.fillMaxWidth().height(44.dp), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.width(NameWidth).padding(end = 4.dp)) {
+        Column(Modifier.width(nameWidth).padding(end = 4.dp)) {
             TaskName(row.task.title)
             val period = row.period
             if (period != null) {
